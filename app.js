@@ -1,5 +1,5 @@
 /**
- * 小説工房 app.js v1.0.0
+ * 小説工房 app.js v1.0.2
  * 会員認証 / 設定UI / プロンプト組み立て / 章ごとの連鎖生成 / 朗読 / ロケ地 / ドライブ保存
  */
 (() => {
@@ -8,7 +8,7 @@
   const C = window.APP_CONFIG;
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
-  const LS = { session: 'skb_session', draft: 'skb_draft', theme: 'skb_theme', reader: 'skb_reader' };
+  const LS = { session: 'skb_session', draft: 'skb_draft', theme: 'skb_theme', reader: 'skb_reader', guide: 'skb_guide_seen' };
 
   const state = {
     token: null,
@@ -178,6 +178,7 @@
     $('#user-name').textContent = state.user ? `${state.user.username} さん` : '';
     renderAll();
     loadWorks();
+    setTimeout(maybeShowGuide, 300);
   }
 
   function onSessionExpired() {
@@ -275,6 +276,7 @@
       f.reset();
       $('#pw-modal').close();
       toast('パスワードを変更しました');
+      setTimeout(maybeShowGuide, 300);
     } catch (err) {
       msg.textContent = err.message; msg.classList.add('is-error');
     } finally { btn.disabled = false; }
@@ -802,7 +804,6 @@ ${fullText}`;
     });
 
     const voice = $('#tts-voice').value;
-    const style = pick(C.NARRATION_STYLES, $('#tts-style').value);
     const toDrive = $('#tts-drive').checked;
 
     stopAudio();
@@ -820,7 +821,7 @@ ${fullText}`;
         const j = jobs[k];
         status(`音声を作っています…（${k + 1}／${jobs.length}）`);
         const r = await api('tts', {
-          text: j.text, voice, stylePrompt: style.prompt,
+          text: j.text, voice,
           novelId: toDrive ? state.novel.novelId : '',
           fileName: `ch${String(j.chapter + 1).padStart(2, '0')}_${String(k + 1).padStart(3, '0')}.wav`
         }, { signal: state.abort.signal });
@@ -1267,6 +1268,19 @@ ${fullText}`;
 
   function saveReader() { store.set(LS.reader, state.reader); }
 
+  /* ================= 使い方 ================= */
+  function openGuide() {
+    const m = $('#guide-modal');
+    if ($('#pw-modal').open) return; // パスワード変更中は出さない
+    if (!m.open) m.showModal();
+    m.querySelector('.guide-body').scrollTop = 0;
+    store.set(LS.guide, true);
+  }
+  // 初めてアプリ本体を開いたときに1回だけ自動で表示
+  function maybeShowGuide() {
+    if (!store.get(LS.guide)) openGuide();
+  }
+
   /* ================= イベント登録・起動 ================= */
   function bind() {
     $$('.auth-tab').forEach(t => t.addEventListener('click', () => switchAuthTab(t.dataset.auth)));
@@ -1278,6 +1292,9 @@ ${fullText}`;
     $('#pw-cancel').addEventListener('click', () => $('#pw-modal').close());
     $('#btn-logout').addEventListener('click', logout);
     $('#btn-theme').addEventListener('click', toggleTheme);
+    $('#btn-guide').addEventListener('click', openGuide);
+    $('#guide-close').addEventListener('click', () => $('#guide-modal').close());
+    $('#guide-modal').addEventListener('click', e => { if (e.target.id === 'guide-modal') $('#guide-modal').close(); });
     $('#user-name').addEventListener('click', () => openPwModal(false));
     $('#user-name').title = 'パスワードを変更する';
     $('#user-name').style.cursor = 'pointer';
@@ -1307,9 +1324,7 @@ ${fullText}`;
     $('#btn-edit-cancel').addEventListener('click', () => endEdit(false));
 
     fillSelect($('#tts-voice'), C.TTS_VOICES);
-    fillSelect($('#tts-style'), C.NARRATION_STYLES);
     $('#tts-voice').value = C.DEFAULTS.voice;
-    $('#tts-style').value = C.DEFAULTS.narration;
     $('#btn-tts').addEventListener('click', generateTts);
     bindPlayer();
 

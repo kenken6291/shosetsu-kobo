@@ -5,8 +5,8 @@
  */
 window.APP_CONFIG = {
   APP_NAME: '小説工房',
-  VERSION: 'v1.0.0',
-  UPDATED: '2026-10-22',
+  VERSION: 'v1.0.2',
+  UPDATED: '2026-10-23',
 
   // ▼ GAS Web App の URL（デプロイ → ウェブアプリ のURL）
   GAS_API_URL: 'https://script.google.com/macros/s/AKfycby3gKyCAAxRgER4b2KEAs8Rz4DSsMIr_YrgARgyui4GlaUbuvH7XlgYdhq0aXu5fuSmEw/exec',
@@ -19,8 +19,7 @@ window.APP_CONFIG = {
     era: 'showa-boom',
     tone: 'serious',
     focus: 'senses',
-    voice: 'Charon',
-    narration: 'calm'
+    voice: 'Charon'
   },
   CHAPTER_CHOICES: [3, 4, 5],
   LENGTH_CHOICES: [
@@ -123,10 +122,5 @@ window.APP_CONFIG = {
     { id: 'Algieba',   label: 'Algieba（なめらか）' },
     { id: 'Aoede',     label: 'Aoede（軽やか）' },
     { id: 'Puck',      label: 'Puck（明るい）' }
-  ],
-  NARRATION_STYLES: [
-    { id: 'calm',   label: '静かな朗読',     prompt: '次の小説の一節を、落ち着いた声で、間を大切にしながら朗読してください。' },
-    { id: 'radio',  label: 'ラジオドラマ風', prompt: '次の小説の一節を、深夜のラジオドラマのように情感を込めて朗読してください。会話は人物に合わせて声色を少し変えてください。' },
-    { id: 'gritty', label: '渋い語り',       prompt: '次の小説の一節を、低く渋い声で、乾いた調子で淡々と語ってください。' }
   ]
 };

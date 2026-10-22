@@ -1,5 +1,5 @@
 /**
- * 小説工房 Code.gs v1.0.0
+ * 小説工房 Code.gs v1.0.1
  * GitHub Pages から text/plain の POST(JSON) を受けるAPI。
  *
  * スクリプトプロパティ:
@@ -15,7 +15,7 @@
  * ※ コードを変えたら「デプロイを管理 → 編集 → 新バージョン」で再デプロイすること。
  */
 
-const APP = { NAME: '小説工房', VERSION: '1.0.0' };
+const APP = { NAME: '小説工房', VERSION: '1.0.1' };
 const DEFAULT_TEXT_MODEL = 'gemini-2.5-flash';
 const DEFAULT_TTS_MODEL = 'gemini-2.5-flash-preview-tts';
 const SESSION_TTL = 21600;               // 6時間（CacheService上限）
@@ -428,10 +428,8 @@ function tts_(req) {
   if (!key) fail_('サーバーにGemini APIキーが設定されていません', 'CONFIG');
   const model = prop_('GEMINI_TTS_MODEL', DEFAULT_TTS_MODEL);
   const voice = /^[A-Za-z]{2,20}$/.test(String(req.voice || '')) ? req.voice : 'Charon';
-  const style = String(req.stylePrompt || '').slice(0, 300);
-
   const body = {
-    contents: [{ role: 'user', parts: [{ text: (style ? style + '\n\n' : '') + text }] }],
+    contents: [{ role: 'user', parts: [{ text: text }] }], // 本文だけを送る（指示文は読み上げられてしまうため付けない）
     generationConfig: {
       responseModalities: ['AUDIO'],
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } }

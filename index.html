@@ -25,6 +25,7 @@
     </div>
     <div class="masthead-tools">
       <span class="user-name" id="user-name" hidden></span>
+      <button type="button" class="btn ghost small" id="btn-guide">使い方</button>
       <button type="button" class="btn ghost small" id="btn-theme" aria-label="表示テーマを切り替える">明暗</button>
       <button type="button" class="btn ghost small" id="btn-logout" hidden>ログアウト</button>
     </div>
@@ -99,6 +100,62 @@
         <button type="submit" class="btn primary">パスワードを変更</button>
       </div>
     </form>
+  </dialog>
+
+  <!-- ===== 使い方 ===== -->
+  <dialog class="modal guide" id="guide-modal" aria-labelledby="guide-title">
+    <div class="guide-head">
+      <h2 id="guide-title">小説工房の使い方</h2>
+      <button type="button" class="btn ghost small" id="guide-close">閉じる</button>
+    </div>
+    <div class="guide-body">
+      <section>
+        <h3>はじめに</h3>
+        <p>「新規登録」でユーザー名とメールアドレスを入れると、仮パスワードがメールで届きます。仮パスワードでログインすると本パスワードの設定画面が出るので、8文字以上（英字と数字を含む）で設定してください。パスワードを忘れたときは「パスワード再発行」から仮パスワードを受け取り直せます。ログイン中に名前を押すと、パスワードを変更できます。</p>
+      </section>
+
+      <section>
+        <h3>書き上げるまでの流れ</h3>
+        <ol class="guide-steps">
+          <li>
+            <strong>設定</strong>
+            <p>物語の核になるあらすじ案を書き、文体・時代背景・トーン・描写の切り口・章数・1章の分量を選びます。題名と舞台は空欄でも構いません。「構成を作る」を押すと、30秒〜1分ほどで章立てができます。</p>
+          </li>
+          <li>
+            <strong>構成</strong>
+            <p>題名、登場人物、各章のあらすじが表示されます。気になるところはそのまま書き換えられ、本文の生成に反映されます。登場人物は「名前｜役割｜説明」の形で1行に1人ずつ書きます。気に入らなければ「構成を作り直す」を押します。</p>
+          </li>
+          <li>
+            <strong>本文</strong>
+            <p>「残りの章を順に書く」で第一章から順に書き進めます。1章につき1〜3分かかります。前の章の要約と直前の場面を引き継ぐので、章は前から順に書いてください。左の章一覧から章を選び、「この章を書く／書き直す」で1章だけ書き直すこともできます。「この章を編集」で本文を直接手直しできます。</p>
+          </li>
+          <li>
+            <strong>朗読</strong>
+            <p>読む範囲（全章または1章）と声を選び、「音声を作る」を押します。本文を短く区切って順に音声にするため、1章で数分〜十数分かかります。最初の区切りができた時点から再生できます。「全部つなげて保存」で1本のWAVファイルにまとめて保存できます。</p>
+          </li>
+          <li>
+            <strong>ロケ地</strong>
+            <p>「本文からロケ地を拾う」で、物語の舞台になった場所と空撮用のカメラ設定（距離・傾き・方位）を一覧にします。数値は書き換えられます。「下見」を押すとGoogle Earthでその場所が開きます。KMLはGoogle Earthでの確認用、カメラJSONはGoogle Earth Studioでキーフレームを打つときの数値表として使います。</p>
+          </li>
+          <li>
+            <strong>保存</strong>
+            <p>「Googleドライブに保存」で、本文（txt・md）、構成、ロケ地データを作品ごとのフォルダにまとめて保存します。保存した作品は「保存した作品」の一覧から「開く」で続きを書けます。</p>
+          </li>
+        </ol>
+      </section>
+
+      <section>
+        <h3>知っておくと便利なこと</h3>
+        <ul class="guide-tips">
+          <li>本文画面の「縦書き」で文庫本のように縦組みで読めます。「小」「大」で文字の大きさを変えられます。</li>
+          <li>書いている途中の内容は、このブラウザに自動で下書き保存されます。ただし別の端末で続けるときは、ドライブに保存してから開いてください。</li>
+          <li>生成中は画面上部に進み具合が出ます。「中断」で止められます（書き終えた章は残ります）。</li>
+          <li>うまく書けなかった章は、構成のあらすじを具体的に直してから書き直すと良くなります。</li>
+          <li>6時間ほど操作しないとログインが切れます。その場合はもう一度ログインしてください。</li>
+          <li>右上の「明暗」で明るい表示と暗い表示を切り替えられます。</li>
+        </ul>
+      </section>
+    </div>
   </dialog>
 
   <!-- ===== アプリ本体 ===== -->
@@ -220,10 +277,9 @@
         <h2>朗読</h2>
         <p>本文を短く区切って音声にします。1章で数分〜十数分かかります。</p>
       </header>
-      <div class="grid-3">
+      <div class="grid-2">
         <label class="field"><span>読む範囲</span><select id="tts-scope"></select></label>
         <label class="field"><span>声</span><select id="tts-voice"></select></label>
-        <label class="field"><span>読み方</span><select id="tts-style"></select></label>
       </div>
       <label class="check"><input type="checkbox" id="tts-drive"> 作った音声をGoogleドライブにも保存する</label>
       <div class="actions">
