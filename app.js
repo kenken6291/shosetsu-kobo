@@ -1,202 +1,143 @@
-/* 今日は何をしよう — フロントエンド（app.js） */
-'use strict';
-
+/**
+ * 小説工房 app.js v1.0.0
+ * 会員認証 / 設定UI / プロンプト組み立て / 章ごとの連鎖生成 / 朗読 / ロケ地 / ドライブ保存
+ */
 (() => {
-  /* ============================== 基本ユーティリティ ============================== */
+  'use strict';
+
+  const C = window.APP_CONFIG;
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const LS = { session: 'skb_session', draft: 'skb_draft', theme: 'skb_theme', reader: 'skb_reader' };
 
-  const LS = {
-    get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
-    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* 保存できなくても動作は続ける */ } },
-    del(k) { try { localStorage.removeItem(k); } catch { /* noop */ } }
-  };
-  const KEY = { token: 'kn_token', items: 'kn_items', mode: 'kn_mode', theme: 'kn_theme' };
-
-  const DEFAULT_ITEMS = ['近所を散歩する', '本を1章だけ読む', '部屋を10分片付ける', '新しいレシピに挑戦', '20分だけ昼寝', '気になっていたカフェへ行く'];
-  const MODE_LABEL = { roulette: 'ルーレット', amida: 'あみだくじ', trump: 'トランプ', omikuji: 'おみくじ' };
-  const MODE_BUTTON = { roulette: 'ルーレットを回す', amida: 'あみだをたどる', trump: 'カードを配る', omikuji: 'おみくじを振る' };
-  const MODE_HINT = {
-    roulette: '',
-    amida: '上の番号をタップするとそこから出発します。線の間をタップすると横線を足せます。',
-    trump: '配ったあと、好きなカードを1枚めくってください。',
-    omikuji: ''
-  };
-  const OUTCOME_LABEL = { followed: 'くじどおりにやった', rebel: 'くじに逆らった', skipped: 'やらなかった' };
-  const FACES = ['', '😫', '🙁', '😐', '🙂', '😆'];
-  const SCORE_COLORS = ['', '#8FA3C4', '#A9B7D6', '#C9C9B0', '#F6C454', '#F2A3AE'];
-  const WEEK = ['月', '火', '水', '木', '金', '土', '日'];
-
-  const EYE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>';
-  const EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.9 17.9A10.8 10.8 0 0 1 12 19c-7 0-11-7-11-7a19.8 19.8 0 0 1 5.1-5.9M9.9 5.2A9.9 9.9 0 0 1 12 5c7 0 11 7 11 7a19.6 19.6 0 0 1-2.2 3.2M14.1 14.1a3 3 0 1 1-4.2-4.2"/><path d="M1 1l22 22"/></svg>';
-
-  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  const wheelColors = () => ['--w1', '--w2', '--w3', '--w4', '--w5', '--w6'].map(cssVar);
-
-  function randInt(n) {
-    const a = new Uint32Array(1);
-    crypto.getRandomValues(a);
-    return a[0] % n;
-  }
-  function shuffle(arr) {
-    for (let i = arr.length - 1; i > 0; i--) {
-      const j = randInt(i + 1);
-      [arr[i], arr[j]] = [arr[j], arr[i]];
-    }
-    return arr;
-  }
-  function todayStr() {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  }
-  function fmtDate(s) {
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || '');
-    if (!m) return s || '';
-    const d = new Date(+m[1], +m[2] - 1, +m[3]);
-    return `${+m[2]}月${+m[3]}日（${'日月火水木金土'[d.getDay()]}）`;
-  }
-  function kanjiNum(n) {
-    const d = '〇一二三四五六七八九';
-    if (n < 10) return d[n];
-    if (n < 20) return '十' + (n % 10 ? d[n % 10] : '');
-    return d[Math.floor(n / 10)] + '十' + (n % 10 ? d[n % 10] : '');
-  }
-  function fitText(ctx, text, maxW) {
-    if (ctx.measureText(text).width <= maxW) return text;
-    let t = text;
-    while (t.length > 1 && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
-    return t + '…';
-  }
-
-  /* ============================== 状態 ============================== */
   const state = {
-    token: LS.get(KEY.token, null),
+    token: null,
     user: null,
-    items: LS.get(KEY.items, DEFAULT_ITEMS.slice()),
-    mode: LS.get(KEY.mode, CONFIG.DEFAULT_MODE || 'roulette'),
-    sets: [],
-    drawing: false,
-    lastDraw: null,
-    lastDrawSaving: null,
-    linkedDraw: null,
-    editingId: null,
-    photos: [],
-    diaries: [],
-    diaryTotal: 0,
-    stats: null,
-    persona: null
+    novel: blankNovel(),
+    current: 0,          // 本文画面で選択中の章
+    editing: false,
+    busy: false,
+    abort: null,
+    audio: { chunks: [], index: -1 },
+    reader: { vertical: false, size: 1.0625 }
   };
-  if (!Array.isArray(state.items) || state.items.length < 2) state.items = DEFAULT_ITEMS.slice();
-  if (!MODE_LABEL[state.mode]) state.mode = 'roulette';
 
-  /* ============================== 通知・通信 ============================== */
+  function blankNovel() {
+    return { novelId: null, title: '', settings: null, plot: null, chapters: [], locations: [], updatedAt: null };
+  }
+
+  /* ================= 共通ユーティリティ ================= */
+  const store = {
+    get(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* 容量超過などは無視 */ } },
+    del(k) { try { localStorage.removeItem(k); } catch (e) {} }
+  };
+
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  function xmlEsc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c]));
+  }
+  const num = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
+  const fmtNum = n => Number(n).toLocaleString('ja-JP');
+  const kanji = n => ['〇', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'][n] || String(n);
+
   let toastTimer = null;
-  function toast(msg) {
-    const el = $('#toast');
-    el.textContent = msg;
-    el.classList.add('show');
+  function toast(msg, isError = false) {
+    const t = $('#toast');
+    t.textContent = msg;
+    t.classList.toggle('is-error', isError);
+    t.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove('show'), 3400);
+    toastTimer = setTimeout(() => { t.hidden = true; }, isError ? 6000 : 3200);
   }
 
-  let busyCount = 0;
-  function busy(on, text) {
-    busyCount = Math.max(0, busyCount + (on ? 1 : -1));
-    if (on && text) $('#busyText').textContent = text;
-    if (on && !text) $('#busyText').textContent = '通信中…';
-    $('#busy').hidden = busyCount === 0;
+  function setBusy(on, msg = '') {
+    state.busy = on;
+    $('#statusbar').hidden = !on;
+    $('#status-text').textContent = msg;
+    $$('#app button').forEach(b => {
+      if (['btn-abort', 'pl-play', 'pl-prev', 'pl-next', 'pl-dl-one', 'pl-dl-all', 'btn-theme'].includes(b.id)) return;
+      if (b.classList.contains('step') || b.classList.contains('toc-item')) return;
+      b.disabled = on;
+    });
+    if (!on) { state.abort = null; refreshEarthButtons(); }
   }
+  const status = msg => { $('#status-text').textContent = msg; };
 
+  function download(name, content, mime) {
+    const blob = content instanceof Blob ? content : new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+  const safeFile = s => (String(s || '無題').replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 40) || '無題');
+
+  /* ================= GAS 通信 ================= */
   async function api(action, payload = {}, opts = {}) {
-    if (!CONFIG.GAS_API_URL || CONFIG.GAS_API_URL.includes('XXXX')) {
+    if (!C.GAS_API_URL || C.GAS_API_URL.includes('XXXX')) {
       throw new Error('config.js の GAS_API_URL を設定してください');
     }
-    if (!opts.silent) busy(true, opts.busyText);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs || C.REQUEST_TIMEOUT_MS);
+    const outer = opts.signal;
+    const onOuter = () => ctrl.abort();
+    if (outer) { if (outer.aborted) ctrl.abort(); else outer.addEventListener('abort', onOuter); }
     try {
-      let res;
-      try {
-        res = await fetch(CONFIG.GAS_API_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({ ...payload, action, token: state.token })
-        });
-      } catch {
-        throw new Error('サーバーにつながりません。通信状態を確認してください');
-      }
-      if (!res.ok) throw new Error(`サーバーに接続できませんでした（${res.status}）`);
+      const res = await fetch(C.GAS_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // プリフライト回避
+        body: JSON.stringify(Object.assign({ action, token: state.token }, payload)),
+        signal: ctrl.signal,
+        redirect: 'follow'
+      });
+      if (!res.ok) throw new Error(`通信に失敗しました（${res.status}）`);
       const data = await res.json();
       if (!data.ok) {
-        if (data.code === 'SESSION_EXPIRED' && action !== 'login') {
-          clearSession();
-          showView('auth');
-        } else if (data.code === 'MUST_CHANGE') {
-          openChange(true);
-        }
-        const err = new Error(data.message || 'エラーが発生しました');
+        const err = new Error(data.error || '処理に失敗しました');
         err.code = data.code;
+        if (data.code === 'AUTH') onSessionExpired();
+        if (data.code === 'PW_CHANGE_REQUIRED') openPwModal(true);
         throw err;
       }
       return data;
+    } catch (e) {
+      if (e.name === 'AbortError') {
+        const err = new Error(outer && outer.aborted ? '中断しました' : '時間切れになりました。もう一度お試しください');
+        err.code = outer && outer.aborted ? 'ABORT' : 'TIMEOUT';
+        throw err;
+      }
+      throw e;
     } finally {
-      if (!opts.silent) busy(false);
+      clearTimeout(timer);
+      if (outer) outer.removeEventListener('abort', onOuter);
     }
   }
 
-  /* ============================== 画面切り替え ============================== */
-  function showView(name) {
-    $('#authView').hidden = name !== 'auth';
-    $('#changeView').hidden = name !== 'change';
-    $('#mainView').hidden = name !== 'main';
-    $('#logoutBtn').hidden = name === 'auth';
-    $('#openChangeBtn').hidden = name !== 'main';
-    $('#userName').hidden = name !== 'main';
-    if (state.user) $('#userName').textContent = `${state.user.nickname} さん`;
-    window.scrollTo(0, 0);
+  function gemini({ system, prompt, json = false, maxTokens = 8192, temperature = 0.9 }) {
+    return api('generate', { system, prompt, json, maxTokens, temperature }, { signal: state.abort?.signal });
   }
 
-  function switchTab(name) {
-    $$('.tab-btn').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
-    $$('.tab-panel').forEach((p) => { p.hidden = p.id !== `tab-${name}`; });
-    if (name === 'draw') requestAnimationFrame(relayoutStage);
+  function parseJsonLoose(text) {
+    const t = String(text || '').replace(/```json|```/g, '').trim();
+    try { return JSON.parse(t); } catch (e) { /* 続行 */ }
+    const s = t.indexOf('{'), e2 = t.lastIndexOf('}');
+    if (s >= 0 && e2 > s) return JSON.parse(t.slice(s, e2 + 1));
+    throw new Error('AIの出力を読み取れませんでした。もう一度お試しください');
   }
 
-  function clearSession() {
-    state.token = null;
-    state.user = null;
-    LS.del(KEY.token);
-  }
+  /* ================= 認証 ================= */
+  const EYE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
 
-  /* ============================== テーマ ============================== */
-  const THEMES = ['auto', 'light', 'dark'];
-  const THEME_LABEL = { auto: '自動', light: 'ライト', dark: 'ダーク' };
-  function applyTheme(t) {
-    document.documentElement.dataset.theme = t;
-    $('#themeBtn').textContent = t === 'dark' ? '☾' : t === 'light' ? '☀' : '◐';
-    $('#themeBtn').setAttribute('aria-label', `表示テーマ：${THEME_LABEL[t]}（押して切り替え）`);
-    requestAnimationFrame(relayoutStage);
-  }
-
-  /* ============================== 認証 ============================== */
-  function setAuthTab(name) {
-    $$('[data-auth]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.auth === name)));
-    $$('[data-auth-form]').forEach((f) => { f.hidden = f.dataset.authForm !== name; });
-    setMsg('#authMsg', '');
-  }
-
-  function setMsg(sel, text, isError = false) {
-    const el = $(sel);
-    el.textContent = text;
-    el.classList.toggle('error', isError);
-  }
-
-  function wirePasswordToggles() {
-    $$('.pw-toggle').forEach((btn) => {
+  function initPwToggles() {
+    $$('.pw-toggle').forEach(btn => {
       btn.innerHTML = EYE;
       btn.addEventListener('click', () => {
-        const input = btn.previousElementSibling;
+        const input = document.getElementById(btn.dataset.target);
         const show = input.type === 'password';
         input.type = show ? 'text' : 'password';
         btn.innerHTML = show ? EYE_OFF : EYE;
@@ -206,1344 +147,1223 @@
     });
   }
 
-  function openChange(force) {
-    $('#changeForm').reset();
-    $$('#changeForm input').forEach((i) => { if (i.type === 'text') i.type = 'password'; });
-    $$('#changeForm .pw-toggle').forEach((b) => { b.innerHTML = EYE; b.setAttribute('aria-pressed', 'false'); });
-    $('#changeCancel').hidden = !!force;
-    $('#changeLead').textContent = force
-      ? '仮パスワードのままでは使えません。英字と数字をまぜた8文字以上にしてください。'
-      : '英字と数字をまぜた8文字以上にしてください。';
-    setMsg('#changeMsg', '');
-    showView('change');
+  function authMsg(msg, kind = '') {
+    const el = $('#auth-msg');
+    el.textContent = msg;
+    el.className = 'auth-msg' + (kind ? ' is-' + kind : '');
   }
 
-  async function onLogin(e) {
+  function switchAuthTab(name) {
+    $$('.auth-tab').forEach(t => {
+      const on = t.dataset.auth === name;
+      t.classList.toggle('is-active', on);
+      t.setAttribute('aria-selected', String(on));
+    });
+    $$('[data-auth-panel]').forEach(p => { p.hidden = p.dataset.authPanel !== name; });
+    authMsg('');
+  }
+
+  function showAuth() {
+    $('#auth-screen').hidden = false;
+    $('#app').hidden = true;
+    $('#btn-logout').hidden = true;
+    $('#user-name').hidden = true;
+  }
+
+  function showApp() {
+    $('#auth-screen').hidden = true;
+    $('#app').hidden = false;
+    $('#btn-logout').hidden = false;
+    $('#user-name').hidden = false;
+    $('#user-name').textContent = state.user ? `${state.user.username} さん` : '';
+    renderAll();
+    loadWorks();
+  }
+
+  function onSessionExpired() {
+    state.token = null; state.user = null;
+    store.del(LS.session);
+    showAuth();
+    switchAuthTab('login');
+    authMsg('ログインの有効期限が切れました。もう一度ログインしてください', 'error');
+  }
+
+  async function handleLogin(e) {
     e.preventDefault();
-    setMsg('#authMsg', '');
+    const f = e.target;
+    const btn = f.querySelector('[type=submit]');
+    btn.disabled = true; authMsg('確認しています…');
     try {
-      const r = await api('login', { email: $('#loginEmail').value.trim(), password: $('#loginPassword').value }, { busyText: 'ログイン中…' });
-      state.token = r.token;
-      state.user = r.user;
-      LS.set(KEY.token, r.token);
-      $('#loginPassword').value = '';
-      if (r.user.mustChange) openChange(true);
-      else enterMain();
+      const r = await api('login', { email: f.email.value.trim(), password: f.password.value });
+      state.token = r.token; state.user = r.user;
+      store.set(LS.session, { token: r.token, user: r.user });
+      f.reset();
+      authMsg('');
+      if (r.user.status === 'FIRST_LOGIN') { showApp(); openPwModal(true); }
+      else { showApp(); toast('ログインしました'); }
     } catch (err) {
-      setMsg('#authMsg', err.message, true);
-    }
+      authMsg(err.message, 'error');
+    } finally { btn.disabled = false; }
   }
 
-  async function onRegister(e) {
+  async function handleRegister(e) {
     e.preventDefault();
-    setMsg('#authMsg', '');
-    const email = $('#regEmail').value.trim();
+    const f = e.target;
+    const btn = f.querySelector('[type=submit]');
+    btn.disabled = true; authMsg('登録しています…');
     try {
-      const r = await api('register', { email, nickname: $('#regNickname').value.trim() }, { busyText: '登録中…' });
-      setAuthTab('login');
-      $('#loginEmail').value = email;
+      const r = await api('register', { email: f.email.value.trim(), username: f.username.value.trim() });
       let msg = r.message;
-      if (r.tempPassword) msg += `（テスト表示）仮パスワード：${r.tempPassword}`;
-      setMsg('#authMsg', msg);
-      $('#registerForm').reset();
+      if (r.tempPassword) msg += `\n仮パスワード：${r.tempPassword}`;
+      const email = f.email.value.trim();
+      f.reset();
+      switchAuthTab('login');
+      $('#form-login').email.value = email;
+      authMsg(msg, 'ok');
     } catch (err) {
-      setMsg('#authMsg', err.message, true);
-    }
+      authMsg(err.message, 'error');
+    } finally { btn.disabled = false; }
   }
 
-  async function onReset(e) {
+  async function handleReset(e) {
     e.preventDefault();
-    setMsg('#authMsg', '');
-    const email = $('#resetEmail').value.trim();
+    const f = e.target;
+    const btn = f.querySelector('[type=submit]');
+    btn.disabled = true; authMsg('送信しています…');
     try {
-      const r = await api('resetPassword', { email }, { busyText: '再発行中…' });
-      setAuthTab('login');
-      $('#loginEmail').value = email;
-      setMsg('#authMsg', r.message);
+      const r = await api('resetPassword', { email: f.email.value.trim() });
+      let msg = r.message;
+      if (r.tempPassword) msg += `\n仮パスワード：${r.tempPassword}`;
+      const email = f.email.value.trim();
+      f.reset();
+      switchAuthTab('login');
+      $('#form-login').email.value = email;
+      authMsg(msg, 'ok');
     } catch (err) {
-      setMsg('#authMsg', err.message, true);
-    }
+      authMsg(err.message, 'error');
+    } finally { btn.disabled = false; }
   }
 
-  async function onChangePassword(e) {
+  function openPwModal(force) {
+    const m = $('#pw-modal');
+    m.dataset.force = force ? '1' : '';
+    $('#pw-cancel').hidden = !!force;
+    $('#pw-modal-lead').textContent = force
+      ? '仮パスワードでログインしました。続けるには本パスワードを設定してください。'
+      : 'パスワードを変更します。';
+    $('#pw-msg').textContent = '';
+    if (!m.open) m.showModal();
+  }
+
+  async function handlePwChange(e) {
     e.preventDefault();
-    const cur = $('#curPassword').value;
-    const next = $('#newPassword').value;
-    if (next !== $('#newPassword2').value) return setMsg('#changeMsg', '新しいパスワードが確認欄と一致しません', true);
-    if (next.length < 8 || !/[A-Za-z]/.test(next) || !/\d/.test(next)) {
-      return setMsg('#changeMsg', '英字と数字をまぜた8文字以上にしてください', true);
+    const f = e.target;
+    const msg = $('#pw-msg');
+    msg.className = 'auth-msg';
+    if (f.next.value !== f.confirm.value) {
+      msg.textContent = '確認用のパスワードが一致しません'; msg.classList.add('is-error'); return;
     }
+    if (!/^(?=.*[A-Za-z])(?=.*\d).{8,}$/.test(f.next.value)) {
+      msg.textContent = '8文字以上で、英字と数字を両方含めてください'; msg.classList.add('is-error'); return;
+    }
+    const btn = f.querySelector('[type=submit]');
+    btn.disabled = true; msg.textContent = '変更しています…';
     try {
-      const r = await api('changePassword', { currentPassword: cur, newPassword: next }, { busyText: '変更中…' });
-      state.user = r.user;
+      await api('changePassword', { currentPassword: f.current.value, newPassword: f.next.value });
+      state.user.status = 'ACTIVE';
+      store.set(LS.session, { token: state.token, user: state.user });
+      f.reset();
+      $('#pw-modal').close();
       toast('パスワードを変更しました');
-      enterMain();
     } catch (err) {
-      setMsg('#changeMsg', err.message, true);
-    }
+      msg.textContent = err.message; msg.classList.add('is-error');
+    } finally { btn.disabled = false; }
   }
 
-  async function onLogout() {
-    try { await api('logout', {}, { silent: true }); } catch { /* 期限切れでも続行 */ }
-    clearSession();
-    stopListening();
-    setAuthTab('login');
-    showView('auth');
+  async function logout() {
+    try { await api('logout', {}); } catch (e) { /* 失効済みでも続行 */ }
+    state.token = null; state.user = null;
+    store.del(LS.session);
+    stopAudio();
+    showAuth();
+    switchAuthTab('login');
+    authMsg('ログアウトしました', 'ok');
   }
 
-  let mainReady = false;
-  function enterMain() {
-    showView('main');
-    if (!mainReady) {
-      mainReady = true;
-      renderItems();
-      setMode(state.mode);
-      resetDiaryForm();
-    }
-    switchTab('draw');
-    loadSets();
-    loadDiaries(true);
+  /* ================= 設定フォーム ================= */
+  function fillSelect(sel, items, valueKey = 'id', labelKey = 'label') {
+    sel.innerHTML = items.map(i => `<option value="${esc(i[valueKey])}">${esc(i[labelKey])}</option>`).join('');
   }
 
-  /* ============================== 選択肢 ============================== */
-  function renderItems() {
-    const ul = $('#itemList');
-    ul.innerHTML = '';
-    const colors = wheelColors();
-    state.items.forEach((it, i) => {
-      const li = document.createElement('li');
-      li.style.setProperty('--dot', colors[i % colors.length]);
-      li.innerHTML = `<input type="text" maxlength="60" aria-label="選択肢${i + 1}"><button type="button" class="icon-btn del" aria-label="「${esc(it)}」を削除">×</button>`;
-      const inp = li.querySelector('input');
-      inp.value = it;
-      inp.addEventListener('change', () => {
-        const v = inp.value.trim();
-        if (v) state.items[i] = v;
-        else if (state.items.length > 2) state.items.splice(i, 1);
-        else inp.value = state.items[i];
-        saveItems();
-      });
-      li.querySelector('.del').addEventListener('click', () => {
-        if (state.items.length <= 2) return toast('選択肢は2個以上必要です');
-        state.items.splice(i, 1);
-        saveItems();
-      });
-      ul.appendChild(li);
-    });
-    $('#itemCount').textContent = state.items.length;
+  function initSettingsForm() {
+    $('#choices-style').innerHTML = C.STYLE_PRESETS.map(p => {
+      const m = p.label.match(/^(.*?)（(.*)）$/);
+      const name = m ? m[1] : p.label;
+      const sub = m ? m[2] : '';
+      return `<label class="choice"><input type="radio" name="style" value="${esc(p.id)}">
+        <span class="choice-name">${esc(name)}</span><span class="choice-desc">${esc(sub)}</span></label>`;
+    }).join('');
+    fillSelect($('#sel-era'), C.ERA_PRESETS);
+    fillSelect($('#sel-tone'), C.TONE_PRESETS);
+    fillSelect($('#sel-focus'), C.FOCUS_PRESETS);
+    $('#sel-chapters').innerHTML = C.CHAPTER_CHOICES.map(n => `<option value="${n}">${n}章</option>`).join('');
+    fillSelect($('#sel-length'), C.LENGTH_CHOICES, 'value', 'label');
+    $('#sel-era').addEventListener('change', updateEraNote);
+    $('#form-settings').addEventListener('input', debounce(() => {
+      state.novel.settings = readSettings(); saveDraft();
+    }, 600));
+    writeSettings(Object.assign({}, C.DEFAULTS));
   }
 
-  function saveItems() {
-    LS.set(KEY.items, state.items);
-    renderItems();
-    mountStage();
+  function updateEraNote() {
+    const era = C.ERA_PRESETS.find(p => p.id === $('#sel-era').value);
+    $('#era-note').textContent = era ? era.prompt : '';
   }
 
-  async function loadSets() {
+  function readSettings() {
+    const f = $('#form-settings');
+    return {
+      title: f.title.value.trim(),
+      place: f.place.value.trim(),
+      premise: f.premise.value.trim(),
+      protagonist: f.protagonist.value.trim(),
+      style: (f.querySelector('input[name=style]:checked') || {}).value || C.DEFAULTS.style,
+      era: f.era.value, tone: f.tone.value, focus: f.focus.value,
+      chapters: num(f.chapters.value, C.DEFAULTS.chapters),
+      charsPerChapter: num(f.charsPerChapter.value, C.DEFAULTS.charsPerChapter),
+      notes: f.notes.value.trim()
+    };
+  }
+
+  function writeSettings(s) {
+    const f = $('#form-settings');
+    s = Object.assign({}, C.DEFAULTS, s || {});
+    f.title.value = s.title || ''; f.place.value = s.place || '';
+    f.premise.value = s.premise || ''; f.protagonist.value = s.protagonist || '';
+    f.notes.value = s.notes || '';
+    const radio = f.querySelector(`input[name=style][value="${s.style}"]`) || f.querySelector('input[name=style]');
+    radio.checked = true;
+    f.era.value = s.era; f.tone.value = s.tone; f.focus.value = s.focus;
+    f.chapters.value = String(s.chapters); f.charsPerChapter.value = String(s.charsPerChapter);
+    updateEraNote();
+  }
+
+  /* ================= プロンプト組み立て ================= */
+  const pick = (list, id) => list.find(p => p.id === id) || list[0];
+
+  function buildSystemPrompt(s) {
+    const st = pick(C.STYLE_PRESETS, s.style);
+    const era = pick(C.ERA_PRESETS, s.era);
+    const tone = pick(C.TONE_PRESETS, s.tone);
+    const focus = pick(C.FOCUS_PRESETS, s.focus);
+    return [
+      'あなたは日本語で長編小説を書く熟練の作家です。以下の作風・時代・トーン・描写方針を、最初から最後まで一貫して守ってください。',
+      `【文体・作風：${st.label}】\n${st.prompt}`,
+      `【時代背景・空気感：${era.label}】\n${era.prompt}\nこの時代に存在しない物・言葉・価値観を持ち込まないこと。風俗・物価・交通手段・言葉遣いを時代に合わせること。`,
+      `【物語のトーン：${tone.label}】\n${tone.prompt}`,
+      `【描写の切り口：${focus.label}】\n${focus.prompt}`,
+      '【共通ルール】\n- 実在作家の文章を引用・再現せず、文体の特徴を参考にした独自の文章を書く。\n- あらすじ的な要約で済ませず、場面として描く。\n- 同じ比喩・言い回し・身振りを繰り返さない。\n- 指示された形式以外（前置き、解説、あとがき、注釈）は出力しない。'
+    ].join('\n\n');
+  }
+
+  function buildPlotPrompt(s) {
+    return `次の条件で、長編小説の全体プロットと章立てを作ってください。
+
+【題名】${s.title || '（未定。物語にふさわしい題名を付けること）'}
+【物語の核・あらすじ案】${s.premise}
+【主人公】${s.protagonist || '（おまかせ）'}
+【舞台となる土地】${s.place || '（時代に合う実在の土地を選ぶこと）'}
+【章数】${s.chapters}章（起承転結を章に割り振る）
+【1章の分量】約${s.charsPerChapter}字
+【その他の希望】${s.notes || 'なし'}
+
+条件：
+- chapters はちょうど ${s.chapters} 件。phase は「起」「承」「転」「結」のいずれか。
+- 各章の synopsis は200〜300字で、その章で起きる出来事と人物の感情の動きを具体的に書く。
+- 伏線は前半の章に置き、後半で回収する。
+- locations には実在の地名・建物・通り・駅・港などを書く（架空の店はその所在地の実在地名を添える）。
+
+次のJSONだけを出力してください。
+{
+  "title": "題名",
+  "logline": "物語を一文で",
+  "theme": "主題",
+  "setting": "舞台と時代の具体的な説明",
+  "characters": [{"name": "名前", "role": "役割", "description": "年齢・外見・経歴・癖・隠している秘密"}],
+  "chapters": [{"no": 1, "title": "章題", "phase": "起", "synopsis": "200〜300字", "keyScenes": ["場面1", "場面2"], "locations": ["地名"], "endingHook": "章の終わり方"}]
+}`;
+  }
+
+  function charactersText(plot) {
+    return (plot.characters || []).map(c => `・${c.name}（${c.role}）：${c.description}`).join('\n');
+  }
+
+  function buildChapterPrompt(s, plot, idx) {
+    const ch = plot.chapters[idx];
+    const total = plot.chapters.length;
+    const prev = state.novel.chapters.slice(0, idx);
+    const outline = plot.chapters.map((c, i) => `第${i + 1}章「${c.title}」（${c.phase}）${i === idx ? ' ← 今回' : ''}`).join('\n');
+    const summaries = prev.map((c, i) => `第${i + 1}章「${plot.chapters[i].title}」：${c && c.summary ? c.summary : '（要約なし）'}`).join('\n');
+    const lastText = idx > 0 && prev[idx - 1] && prev[idx - 1].text ? prev[idx - 1].text.slice(-C.CONTEXT_TAIL_CHARS) : '';
+    const target = s.charsPerChapter;
+    const isLast = idx === total - 1;
+
+    return `長編小説『${plot.title}』の第${idx + 1}章（全${total}章）の本文を書いてください。
+
+■ 物語の概要
+${plot.logline}
+主題：${plot.theme || ''}
+舞台：${plot.setting || ''}
+
+■ 登場人物
+${charactersText(plot)}
+
+■ 全体の章立て
+${outline}
+
+${idx > 0 ? `■ これまでの章の要約（この内容と矛盾させないこと）
+${summaries}
+
+■ 直前の本文（この続きとして自然につながるように書き出すこと。この部分は繰り返さない）
+……${lastText}
+` : ''}
+■ 今回書く章
+第${idx + 1}章「${ch.title}」（${ch.phase}）
+あらすじ：${ch.synopsis}
+入れる場面：${(ch.keyScenes || []).join('／')}
+主な舞台：${(ch.locations || []).join('、')}
+章の終わり方：${ch.endingHook || ''}
+
+■ 書き方
+- 分量は約${target}字（少なくとも${Math.round(target * 0.8)}字）。場面を省略せずに描く。
+- 章題や見出しは書かず、本文だけを出力する。
+- 段落の頭は全角スペースで一字下げ。会話は「」で書く。段落の間に空行は入れない。
+- 場面転換には「＊」だけの行を使う。
+${isLast ? '- 最終章として物語を締めくくる。伏線を回収し、余韻を残して終える。' : '- 章の最後は次の章へ読み進めたくなる引きで終える。物語を完結させない。'}`;
+  }
+
+  function buildContinuePrompt(plot, idx, text) {
+    return `長編小説『${plot.title}』第${idx + 1}章「${plot.chapters[idx].title}」の本文が途中で切れました。
+以下は書き終えた部分の末尾です。
+
+……${text.slice(-C.CONTEXT_TAIL_CHARS)}
+
+この直後から、同じ文体のまま続きを書いてください。既に書いた部分は繰り返さず、本文だけを出力してください。章の終わり方：${plot.chapters[idx].endingHook || ''}`;
+  }
+
+  function buildSummaryPrompt(plot, idx, text) {
+    return `次は長編小説『${plot.title}』第${idx + 1}章「${plot.chapters[idx].title}」の本文です。
+次の章を書く作家への引き継ぎメモとして、300字程度で要約してください。
+起きた出来事、登場人物の現在の状態（居場所・怪我・感情・関係の変化）、未解決の謎や伏線、章の終わりの状況を必ず含めてください。要約文だけを出力してください。
+
+${text}`;
+  }
+
+  function buildLocationPrompt(plot, fullText) {
+    return `次の小説から、物語の舞台になった場所を最大${C.LOCATION_MAX}か所抜き出し、Google Earth で空撮するためのカメラ設定を付けてください。
+
+題名：${plot.title}
+舞台：${plot.setting || ''}
+
+条件：
+- 登場順に並べる。同じ場所は1回だけ。
+- 実在の場所は実際の緯度経度を使う。架空の場所は、物語上もっとも近い実在の場所に置き換え、fictional を true にする。
+- groundAltitude はその地点の地表標高（m）の概算。
+- range はカメラから地点までの距離（m）。街路や建物は300〜1200、街全体は2000〜6000、山や海岸線は5000〜20000を目安にする。
+- tilt は0が真下、90が水平。情景に合わせて45〜75を基本とする。heading は0が北、時計回りの度数。
+- durationSec はその地点へ飛ぶ秒数（4〜10）。
+- scene はその場所で起きた出来事を40字以内で。
+
+次のJSONだけを出力してください。
+{"locations": [{"name": "物語中の呼び名", "realPlace": "実在の地名・施設名", "fictional": false, "chapter": 1, "scene": "出来事", "lat": 35.0, "lng": 139.0, "groundAltitude": 10, "range": 800, "tilt": 60, "heading": 0, "durationSec": 6}]}
+
+本文：
+${fullText}`;
+  }
+
+  /* ================= 構成（プロット）生成 ================= */
+  async function generatePlot(e) {
+    if (e) e.preventDefault();
+    const s = readSettings();
+    if (!s.premise) { toast('物語の核・あらすじ案を入れてください', true); return; }
+    if (state.novel.chapters.some(c => c && c.text) &&
+      !confirm('構成を作り直すと、書いた本文は消えます。続けますか？')) return;
+
+    state.abort = new AbortController();
+    setBusy(true, '構成を考えています…（30秒〜1分ほど）');
     try {
-      const r = await api('listSets', {}, { silent: true });
-      state.sets = r.sets || [];
-      renderSets();
-    } catch { /* セットが読めなくても抽選はできる */ }
+      const r = await gemini({ system: buildSystemPrompt(s), prompt: buildPlotPrompt(s), json: true, maxTokens: 8192, temperature: 0.95 });
+      const plot = normalizePlot(parseJsonLoose(r.text), s);
+      state.novel.settings = s;
+      state.novel.plot = plot;
+      state.novel.title = plot.title;
+      state.novel.chapters = plot.chapters.map(() => null);
+      state.novel.locations = [];
+      state.current = 0;
+      saveDraft();
+      renderAll();
+      showPanel('plot');
+      toast('構成ができました');
+    } catch (err) {
+      if (err.code !== 'ABORT') toast(err.message, true);
+    } finally { setBusy(false); }
   }
 
-  function renderSets() {
-    const sel = $('#setSelect');
-    sel.innerHTML = '<option value="">保存したセットを読み込む</option>' +
-      state.sets.map((s) => `<option value="${esc(s.setId)}">${esc(s.name)}（${s.items.length}個）</option>`).join('');
-    $('#deleteSetBtn').disabled = true;
+  function normalizePlot(p, s) {
+    const chapters = Array.isArray(p.chapters) ? p.chapters : [];
+    if (!chapters.length) throw new Error('章立てが空でした。もう一度お試しください');
+    return {
+      title: String(p.title || s.title || '無題').trim(),
+      logline: String(p.logline || ''),
+      theme: String(p.theme || ''),
+      setting: String(p.setting || ''),
+      characters: (Array.isArray(p.characters) ? p.characters : []).map(c => ({
+        name: String(c.name || ''), role: String(c.role || ''), description: String(c.description || '')
+      })),
+      chapters: chapters.map((c, i) => ({
+        no: i + 1,
+        title: String(c.title || `第${i + 1}章`),
+        phase: String(c.phase || ''),
+        synopsis: String(c.synopsis || ''),
+        keyScenes: Array.isArray(c.keyScenes) ? c.keyScenes.map(String) : [],
+        locations: Array.isArray(c.locations) ? c.locations.map(String) : [],
+        endingHook: String(c.endingHook || '')
+      }))
+    };
   }
 
-  /* ============================== 抽選エンジン ============================== */
+  function renderPlot() {
+    const p = state.novel.plot;
+    $('#plot-empty').hidden = !!p;
+    $('#plot-editor').hidden = !p;
+    if (!p) return;
+    $('#plot-title').value = p.title;
+    $('#plot-logline').value = p.logline;
+    $('#plot-setting').value = p.setting;
+    $('#plot-characters').value = p.characters.map(c => `${c.name}｜${c.role}｜${c.description}`).join('\n');
+    $('#plot-chapters').innerHTML = p.chapters.map((c, i) => `
+      <li data-i="${i}">
+        <div class="plan-head">
+          <span class="plan-no">第${kanji(i + 1)}章</span>
+          <label class="field"><span>章題</span><input type="text" data-k="title" value="${esc(c.title)}"></label>
+          <label class="field"><span>構成</span><input type="text" data-k="phase" value="${esc(c.phase)}" maxlength="4"></label>
+        </div>
+        <label class="field"><span>あらすじ</span><textarea data-k="synopsis" rows="4">${esc(c.synopsis)}</textarea></label>
+        <label class="field"><span>入れる場面（／区切り）</span><input type="text" data-k="keyScenes" value="${esc(c.keyScenes.join('／'))}"></label>
+        <div class="grid-2">
+          <label class="field"><span>主な舞台（、区切り）</span><input type="text" data-k="locations" value="${esc(c.locations.join('、'))}"></label>
+          <label class="field"><span>章の終わり方</span><input type="text" data-k="endingHook" value="${esc(c.endingHook)}"></label>
+        </div>
+      </li>`).join('');
+  }
 
-  // ---- ルーレット ----
-  const Roulette = {
-    angle: 0,
-    mount(stage, items) {
-      this.items = items;
-      stage.innerHTML = '<div class="wheel-wrap"><canvas class="wheel" role="img" aria-label="ルーレット"></canvas><div class="wheel-pointer" aria-hidden="true"></div></div>';
-      this.canvas = stage.querySelector('canvas');
-      this.relayout();
-    },
-    relayout() {
-      if (!this.canvas || !this.canvas.isConnected) return;
-      const size = Math.max(240, Math.min(this.canvas.parentElement.clientWidth || 320, 420));
-      const dpr = window.devicePixelRatio || 1;
-      this.size = size;
-      this.dpr = dpr;
-      this.canvas.width = size * dpr;
-      this.canvas.height = size * dpr;
-      this.canvas.style.width = this.canvas.style.height = size + 'px';
-      this.draw();
-    },
-    draw() {
-      const ctx = this.canvas.getContext('2d');
-      const s = this.size, cx = s / 2, cy = s / 2, r = s / 2 - 6;
-      const n = this.items.length, seg = Math.PI * 2 / n;
-      const colors = wheelColors();
-      ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-      ctx.clearRect(0, 0, s, s);
-      for (let i = 0; i < n; i++) {
-        const a0 = this.angle + i * seg;
-        let ci = i % colors.length;
-        if (i === n - 1 && n % colors.length === 1 && n > 1) ci = (ci + 2) % colors.length; // 隣と同色を避ける
-        ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        ctx.arc(cx, cy, r, a0, a0 + seg);
-        ctx.closePath();
-        ctx.fillStyle = colors[ci];
-        ctx.fill();
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = '#1C2A4A';
-        ctx.stroke();
-
-        ctx.save();
-        ctx.translate(cx, cy);
-        ctx.rotate(a0 + seg / 2);
-        ctx.textAlign = 'right';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = '#1C2A4A';
-        const fs = Math.max(11, Math.min(17, s / (n > 12 ? 30 : 22)));
-        ctx.font = `700 ${fs}px "Zen Maru Gothic", sans-serif`;
-        ctx.fillText(fitText(ctx, this.items[i], r * 0.78 - 10), r - 12, 0);
-        ctx.restore();
-      }
-      ctx.beginPath();
-      ctx.arc(cx, cy, r * 0.12, 0, Math.PI * 2);
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fill();
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = '#1C2A4A';
-      ctx.stroke();
-    },
-    run() {
-      return new Promise((resolve) => {
-        const TAU = Math.PI * 2;
-        const n = this.items.length, seg = TAU / n, idx = randInt(n);
-        const jitter = (Math.random() - 0.5) * seg * 0.7;
-        const target = -Math.PI / 2 - (idx + 0.5) * seg + jitter; // 針は真上
-        const delta = (((target - this.angle) % TAU) + TAU) % TAU;
-        const start = this.angle;
-        const end = start + delta + (reduceMotion ? 1 : 6) * TAU;
-        const dur = reduceMotion ? 600 : 4800;
-        const t0 = performance.now();
-        const step = (t) => {
-          const p = Math.min(1, (t - t0) / dur);
-          this.angle = start + (end - start) * (1 - Math.pow(1 - p, 4));
-          this.draw();
-          if (p < 1) requestAnimationFrame(step);
-          else {
-            this.angle = end % TAU;
-            resolve({ result: this.items[idx] });
-          }
-        };
-        requestAnimationFrame(step);
+  function bindPlotEditor() {
+    const sync = debounce(() => {
+      const p = state.novel.plot; if (!p) return;
+      p.title = $('#plot-title').value.trim() || '無題';
+      p.logline = $('#plot-logline').value;
+      p.setting = $('#plot-setting').value;
+      p.characters = $('#plot-characters').value.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+        const [name = '', role = '', ...rest] = l.split(/[｜|]/);
+        return { name: name.trim(), role: role.trim(), description: rest.join('｜').trim() };
       });
-    }
-  };
-
-  // ---- あみだくじ ----
-  const Amida = {
-    ROWS: 14,
-    mount(stage, items) {
-      this.items = items;
-      this.n = items.length;
-      this.bottom = shuffle(items.slice());
-      this.rungs = this.makeRungs();
-      this.start = null;
-      this.path = null;
-      this.progress = 0;
-      this.revealed = false;
-      this.endCol = null;
-      stage.innerHTML = '<div class="amida-scroll"><canvas class="amida" role="img" aria-label="あみだくじ"></canvas></div>';
-      this.wrap = stage.querySelector('.amida-scroll');
-      this.canvas = stage.querySelector('canvas');
-      this.canvas.addEventListener('click', (e) => this.onClick(e));
-      this.relayout();
-    },
-    makeRungs() {
-      const set = new Set();
-      for (let r = 0; r < this.ROWS; r++) {
-        for (let g = 0; g < this.n - 1; g++) {
-          if (set.has(`${r}:${g - 1}`)) continue;
-          if (Math.random() < 0.3) set.add(`${r}:${g}`);
-        }
-      }
-      for (let g = 0; g < this.n - 1; g++) {
-        let has = false;
-        for (let r = 0; r < this.ROWS; r++) if (set.has(`${r}:${g}`)) has = true;
-        if (has) continue;
-        for (let t = 0; t < 30; t++) {
-          const r = randInt(this.ROWS);
-          if (!set.has(`${r}:${g - 1}`) && !set.has(`${r}:${g + 1}`)) { set.add(`${r}:${g}`); break; }
-        }
-      }
-      return set;
-    },
-    relayout() {
-      if (!this.canvas || !this.canvas.isConnected) return;
-      const cw = this.wrap.clientWidth || 320;
-      this.spacing = Math.max(64, Math.min(110, (cw - 16) / this.n));
-      this.w = Math.max(cw, this.spacing * this.n);
-      this.h = 430;
-      this.top = 50;
-      this.bottomY = this.h - 64;
-      this.dpr = window.devicePixelRatio || 1;
-      this.canvas.width = this.w * this.dpr;
-      this.canvas.height = this.h * this.dpr;
-      this.canvas.style.width = this.w + 'px';
-      this.canvas.style.height = this.h + 'px';
-      this.draw();
-    },
-    x(i) { return (this.w - this.spacing * this.n) / 2 + this.spacing * (i + 0.5); },
-    rowY(r) { return this.top + 20 + (this.bottomY - this.top - 40) * (r + 0.5) / this.ROWS; },
-    onClick(e) {
-      if (state.drawing || this.path) return;
-      const rect = this.canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left, y = e.clientY - rect.top;
-      if (y < this.top + 16) {
-        const i = Math.round((x - this.x(0)) / this.spacing);
-        if (i >= 0 && i < this.n) { this.start = i; startDraw(); }
-        return;
-      }
-      if (y > this.bottomY - 8) return;
-      const g = Math.floor((x - this.x(0)) / this.spacing);
-      if (g < 0 || g >= this.n - 1) return;
-      let r = Math.round(((y - this.top - 20) / (this.bottomY - this.top - 40)) * this.ROWS - 0.5);
-      r = Math.max(0, Math.min(this.ROWS - 1, r));
-      const k = `${r}:${g}`;
-      if (this.rungs.has(k)) {
-        this.rungs.delete(k);
-      } else if (this.rungs.has(`${r}:${g - 1}`) || this.rungs.has(`${r}:${g + 1}`)) {
-        return toast('となりの横線と同じ高さには引けません');
-      } else {
-        this.rungs.add(k);
-      }
-      this.draw();
-    },
-    computePath(start) {
-      let c = start;
-      const pts = [[this.x(c), this.top + 14]];
-      for (let r = 0; r < this.ROWS; r++) {
-        const y = this.rowY(r);
-        if (this.rungs.has(`${r}:${c}`)) { pts.push([this.x(c), y]); c++; pts.push([this.x(c), y]); }
-        else if (this.rungs.has(`${r}:${c - 1}`)) { pts.push([this.x(c), y]); c--; pts.push([this.x(c), y]); }
-      }
-      pts.push([this.x(c), this.bottomY - 14]);
-      return { pts, end: c };
-    },
-    draw() {
-      const ctx = this.canvas.getContext('2d');
-      const ink = cssVar('--ink'), sun = cssVar('--sun'), card = cssVar('--card'), soft = cssVar('--ink-soft');
-      ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-      ctx.clearRect(0, 0, this.w, this.h);
-      ctx.lineCap = 'round';
-
-      ctx.strokeStyle = ink;
-      ctx.lineWidth = 3;
-      for (let i = 0; i < this.n; i++) {
-        ctx.beginPath();
-        ctx.moveTo(this.x(i), this.top + 14);
-        ctx.lineTo(this.x(i), this.bottomY - 14);
-        ctx.stroke();
-      }
-      this.rungs.forEach((k) => {
-        const [r, g] = k.split(':').map(Number);
-        const y = this.rowY(r);
-        ctx.beginPath();
-        ctx.moveTo(this.x(g), y);
-        ctx.lineTo(this.x(g + 1), y);
-        ctx.stroke();
-      });
-
-      if (this.path) {
-        ctx.strokeStyle = sun;
-        ctx.lineWidth = 7;
-        ctx.beginPath();
-        let remain = this.progress;
-        ctx.moveTo(...this.path[0]);
-        for (let i = 1; i < this.path.length && remain > 0; i++) {
-          const [x0, y0] = this.path[i - 1], [x1, y1] = this.path[i];
-          const len = Math.hypot(x1 - x0, y1 - y0);
-          if (remain >= len) { ctx.lineTo(x1, y1); remain -= len; this.head = [x1, y1]; }
-          else { const t = remain / len; this.head = [x0 + (x1 - x0) * t, y0 + (y1 - y0) * t]; ctx.lineTo(...this.head); remain = 0; }
-        }
-        ctx.stroke();
-      }
-
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      for (let i = 0; i < this.n; i++) {
-        const x = this.x(i);
-        ctx.beginPath();
-        ctx.arc(x, this.top - 6, 16, 0, Math.PI * 2);
-        ctx.fillStyle = this.start === i ? sun : card;
-        ctx.fill();
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = ink;
-        ctx.stroke();
-        ctx.fillStyle = this.start === i ? '#1C2A4A' : ink;
-        ctx.font = '700 15px "Zen Maru Gothic", sans-serif';
-        ctx.fillText(String(i + 1), x, this.top - 5);
-
-        const label = this.revealed ? this.bottom[i] : '？';
-        const hit = this.revealed && this.endCol === i;
-        ctx.font = `700 ${this.revealed ? 13 : 18}px "Zen Maru Gothic", sans-serif`;
-        if (hit) {
-          ctx.fillStyle = sun;
-          ctx.fillRect(x - this.spacing / 2 + 4, this.bottomY + 2, this.spacing - 8, 36);
-        }
-        ctx.fillStyle = hit ? '#1C2A4A' : (this.revealed ? soft : ink);
-        ctx.fillText(fitText(ctx, label, this.spacing - 12), x, this.bottomY + 20);
-      }
-    },
-    run() {
-      if (this.revealed) this.mount(this.wrap.parentElement, this.items); // 引き直し
-      return new Promise((resolve) => {
-        if (this.start === null) this.start = randInt(this.n);
-        const { pts, end } = this.computePath(this.start);
-        this.path = pts;
-        this.endCol = end;
-        let total = 0;
-        for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
-        const dur = reduceMotion ? 400 : Math.min(5200, 1600 + total * 2.2);
-        const t0 = performance.now();
-        const step = (t) => {
-          const p = Math.min(1, (t - t0) / dur);
-          this.progress = total * p;
-          this.draw();
-          if (this.head && this.wrap.scrollWidth > this.wrap.clientWidth) {
-            this.wrap.scrollLeft = this.head[0] - this.wrap.clientWidth / 2;
-          }
-          if (p < 1) requestAnimationFrame(step);
-          else {
-            this.revealed = true;
-            this.draw();
-            resolve({ result: this.bottom[end] });
-          }
-        };
-        requestAnimationFrame(step);
-      });
-    }
-  };
-
-  // ---- トランプ ----
-  const SUITS = [{ s: '♠', red: false }, { s: '♥', red: true }, { s: '♦', red: true }, { s: '♣', red: false }];
-  const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
-  const Trump = {
-    mount(stage, items) {
-      this.stage = stage;
-      this.items = items;
-      const cards = shuffle(items.map((item, i) => ({ item, suit: SUITS[i % 4], rank: RANKS[randInt(13)] })));
-      stage.innerHTML = '<div class="card-table"></div>';
-      this.table = stage.querySelector('.card-table');
-      cards.forEach((cd, i) => {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'pcard';
-        b.disabled = true;
-        b.setAttribute('aria-label', `${i + 1}枚目のカード`);
-        b.innerHTML = `<span class="pcard-inner"><span class="pcard-back"></span><span class="pcard-face ${cd.suit.red ? 'red' : ''}"><span class="pc-corner">${cd.rank}${cd.suit.s}</span><span class="pc-item">${esc(cd.item)}</span><span class="pc-corner rev">${cd.rank}${cd.suit.s}</span></span></span>`;
-        b.dataset.item = cd.item;
-        this.table.appendChild(b);
-      });
-    },
-    run() {
-      return new Promise((resolve) => {
-        this.mount(this.stage, this.items); // 配り直し
-        const cards = $$('.pcard', this.table);
-        cards.forEach((c) => {
-          c.style.setProperty('--dx', `${(Math.random() - 0.5) * 120}px`);
-          c.style.setProperty('--dy', `${(Math.random() - 0.5) * 60}px`);
-          c.style.setProperty('--rot', `${(Math.random() - 0.5) * 40}deg`);
+      $$('#plot-chapters > li').forEach(li => {
+        const c = p.chapters[num(li.dataset.i)];
+        $$('[data-k]', li).forEach(inp => {
+          const k = inp.dataset.k;
+          if (k === 'keyScenes') c[k] = inp.value.split(/[／\/]/).map(x => x.trim()).filter(Boolean);
+          else if (k === 'locations') c[k] = inp.value.split(/[、,]/).map(x => x.trim()).filter(Boolean);
+          else c[k] = inp.value;
         });
-        this.table.classList.add('shuffling');
-        setTimeout(() => {
-          this.table.classList.remove('shuffling');
-          setHint('好きなカードを1枚めくってください');
-          cards.forEach((c) => {
-            c.disabled = false;
-            c.addEventListener('click', () => {
-              cards.forEach((x) => { x.disabled = true; });
-              c.classList.add('flipped');
-              setTimeout(() => {
-                cards.forEach((x) => { if (x !== c) x.classList.add('flipped', 'dim'); });
-                resolve({ result: c.dataset.item });
-              }, reduceMotion ? 150 : 900);
-            }, { once: true });
-          });
-          cards[0].focus();
-        }, reduceMotion ? 100 : 1000);
       });
-    }
-  };
-
-  // ---- おみくじ ----
-  const FORTUNES = [['大吉', 14], ['中吉', 22], ['小吉', 20], ['吉', 22], ['末吉', 16], ['凶', 6]];
-  function pickFortune() {
-    const total = FORTUNES.reduce((a, f) => a + f[1], 0);
-    let r = randInt(total);
-    for (const [name, w] of FORTUNES) { if (r < w) return name; r -= w; }
-    return '吉';
+      state.novel.title = p.title;
+      saveDraft();
+      renderToc(); renderWriteHead();
+    }, 500);
+    $('#plot-editor').addEventListener('input', sync);
   }
-  const Omikuji = {
-    mount(stage, items) {
-      this.items = items;
-      stage.innerHTML = `
-        <div class="omikuji">
-          <div class="mk-box" aria-hidden="true">
-            <span class="mk-stick"><span class="mk-no"></span></span>
-            <span class="mk-body"><span class="mk-label">御神籤</span></span>
-          </div>
-          <div class="mk-paper" hidden><p class="mk-fortune"></p><p class="mk-item"></p></div>
-        </div>`;
-      this.root = stage.querySelector('.omikuji');
-    },
-    run() {
-      return new Promise((resolve) => {
-        const root = this.root;
-        const paper = $('.mk-paper', root);
-        paper.hidden = true;
-        root.classList.remove('out');
-        const idx = randInt(this.items.length);
-        const fortune = pickFortune();
-        $('.mk-no', root).textContent = `${kanjiNum(idx + 1)}番`;
-        root.classList.add('shaking');
-        setTimeout(() => {
-          root.classList.remove('shaking');
-          root.classList.add('out');
-          setTimeout(() => {
-            $('.mk-fortune', paper).textContent = fortune;
-            $('.mk-item', paper).textContent = this.items[idx];
-            paper.hidden = false;
-            resolve({ result: this.items[idx], fortune });
-          }, reduceMotion ? 100 : 900);
-        }, reduceMotion ? 200 : 1700);
+
+  /* ================= 本文生成（章ごとの連鎖） ================= */
+  async function ensureSummary(i) {
+    const ch = state.novel.chapters[i];
+    if (!ch || !ch.text || ch.summary) return;
+    status(`第${i + 1}章の要約を作っています…`);
+    const r = await gemini({ prompt: buildSummaryPrompt(state.novel.plot, i, ch.text), maxTokens: 1024, temperature: 0.3 });
+    ch.summary = r.text.trim();
+    saveDraft();
+  }
+
+  async function writeChapter(idx) {
+    const s = state.novel.settings || readSettings();
+    const plot = state.novel.plot;
+    const total = plot.chapters.length;
+
+    for (let i = 0; i < idx; i++) {
+      if (!state.novel.chapters[i] || !state.novel.chapters[i].text) {
+        throw new Error(`先に第${i + 1}章を書いてください（前の章の流れを引き継ぐため）`);
+      }
+      await ensureSummary(i);
+    }
+
+    status(`第${idx + 1}章／全${total}章を書いています…（1〜3分ほど）`);
+    const maxTokens = Math.min(32768, Math.max(4096, Math.round(s.charsPerChapter * 2.2)));
+    let r = await gemini({ system: buildSystemPrompt(s), prompt: buildChapterPrompt(s, plot, idx), maxTokens, temperature: 0.95 });
+    let text = cleanChapter(r.text);
+
+    let n = 0;
+    while (r.finishReason === 'MAX_TOKENS' && n < C.MAX_CONTINUE) {
+      n++;
+      status(`第${idx + 1}章の続きを書いています…（${n}回目）`);
+      r = await gemini({ system: buildSystemPrompt(s), prompt: buildContinuePrompt(plot, idx, text), maxTokens, temperature: 0.9 });
+      text += '\n' + cleanChapter(r.text);
+    }
+    if (!text.trim()) throw new Error(`第${idx + 1}章の本文が空でした。もう一度お試しください`);
+
+    state.novel.chapters[idx] = { title: plot.chapters[idx].title, text, summary: '' };
+    // 後ろの章は前提が変わったので要約を捨てる（本文は残す）
+    for (let j = idx + 1; j < total; j++) if (state.novel.chapters[j]) state.novel.chapters[j].summary = '';
+    saveDraft();
+
+    if (idx < total - 1) await ensureSummary(idx);
+  }
+
+  function cleanChapter(t) {
+    return String(t || '')
+      .replace(/^```.*$/gm, '')
+      .replace(/^\s*(#+\s*)?第[0-9０-９一二三四五六七八九十]+章.*$/m, '') // 冒頭に章題が付いた場合
+      .replace(/\n{2,}/g, '\n')
+      .trim();
+  }
+
+  async function writeOne() {
+    if (!state.novel.plot) { toast('先に構成を作ってください', true); return; }
+    const idx = state.current;
+    if (state.novel.chapters[idx] && state.novel.chapters[idx].text &&
+      !confirm(`第${idx + 1}章を書き直します。今の本文は置き換わります。`)) return;
+    state.abort = new AbortController();
+    setBusy(true, '準備しています…');
+    try {
+      await writeChapter(idx);
+      renderWrite();
+      toast(`第${idx + 1}章を書きました`);
+    } catch (err) {
+      if (err.code !== 'ABORT') toast(err.message, true);
+    } finally { setBusy(false); renderWrite(); }
+  }
+
+  async function writeAll() {
+    if (!state.novel.plot) { toast('先に構成を作ってください', true); return; }
+    const total = state.novel.plot.chapters.length;
+    const todo = [];
+    for (let i = 0; i < total; i++) if (!state.novel.chapters[i] || !state.novel.chapters[i].text) todo.push(i);
+    if (!todo.length) { toast('すべての章が書き上がっています'); return; }
+    state.abort = new AbortController();
+    setBusy(true, '準備しています…');
+    try {
+      for (const i of todo) {
+        state.current = i;
+        renderWrite();
+        await writeChapter(i);
+        renderWrite();
+      }
+      toast('すべての章を書き上げました');
+    } catch (err) {
+      if (err.code !== 'ABORT') toast(err.message, true);
+    } finally { setBusy(false); renderWrite(); }
+  }
+
+  /* ================= 本文の表示・編集 ================= */
+  function renderWriteHead() {
+    const p = state.novel.plot;
+    $('#write-title').textContent = p ? `『${p.title}』` : '本文';
+    const written = state.novel.chapters.filter(c => c && c.text);
+    const chars = written.reduce((a, c) => a + c.text.length, 0);
+    $('#write-meta').textContent = p
+      ? `${written.length}／${p.chapters.length}章　合計${fmtNum(chars)}字`
+      : '前の章の要約と直前の場面を引き継ぎながら、1章ずつ書きます。';
+  }
+
+  function renderToc() {
+    const p = state.novel.plot;
+    if (!p) { $('#toc-list').innerHTML = ''; return; }
+    $('#toc-list').innerHTML = p.chapters.map((c, i) => {
+      const ch = state.novel.chapters[i];
+      const done = ch && ch.text;
+      return `<li><button type="button" class="toc-item${i === state.current ? ' is-current' : ''}${done ? ' is-written' : ''}" data-i="${i}">
+        <span>第${kanji(i + 1)}章　${esc(c.title)}</span>
+        <small>${done ? `${fmtNum(ch.text.length)}字` : '未執筆'}</small></button></li>`;
+    }).join('');
+  }
+
+  function renderReader() {
+    const p = state.novel.plot;
+    const el = $('#reader');
+    el.classList.toggle('is-vertical', state.reader.vertical);
+    document.documentElement.style.setProperty('--reader-size', state.reader.size + 'rem');
+    if (!p) { el.innerHTML = '<p class="placeholder">構成を作ると、ここに本文が表示されます。</p>'; $('#char-count').textContent = ''; return; }
+    const ch = state.novel.chapters[state.current];
+    const title = `第${kanji(state.current + 1)}章　${p.chapters[state.current].title}`;
+    if (!ch || !ch.text) {
+      el.innerHTML = `<h3>${esc(title)}</h3><p class="placeholder">この章はまだ書かれていません。「この章を書く／書き直す」で書き始めます。</p>`;
+      $('#char-count').textContent = '';
+    } else {
+      el.innerHTML = `<h3>${esc(title)}</h3>` + ch.text.split('\n').map(l => `<p>${esc(l) || '&nbsp;'}</p>`).join('');
+      $('#char-count').textContent = `${fmtNum(ch.text.length)}字`;
+    }
+    if (state.reader.vertical) el.scrollLeft = el.scrollWidth; // 縦書きは右端から
+    else el.scrollTop = 0;
+    $('#btn-vertical').setAttribute('aria-pressed', String(state.reader.vertical));
+    $('#btn-edit').disabled = state.busy || !(ch && ch.text);
+  }
+
+  function renderWrite() {
+    renderWriteHead(); renderToc();
+    if (!state.editing) renderReader();
+    const p = state.novel.plot;
+    const allDone = p && p.chapters.every((c, i) => state.novel.chapters[i] && state.novel.chapters[i].text);
+    $('#btn-write-all').textContent = allDone ? 'すべて書き上がりました' : '残りの章を順に書く';
+  }
+
+  function startEdit() {
+    const ch = state.novel.chapters[state.current];
+    if (!ch || !ch.text) return;
+    state.editing = true;
+    $('#editor-text').value = ch.text;
+    $('#reader').hidden = true; $('#editor').hidden = false;
+    $('#editor-text').focus();
+  }
+  function endEdit(save) {
+    if (save) {
+      const ch = state.novel.chapters[state.current];
+      ch.text = $('#editor-text').value.replace(/\n{2,}/g, '\n').trim();
+      ch.summary = ''; // 次の生成時に作り直す
+      for (let j = state.current + 1; j < state.novel.chapters.length; j++) {
+        if (state.novel.chapters[j]) state.novel.chapters[j].summary = '';
+      }
+      saveDraft();
+      toast('編集を反映しました');
+    }
+    state.editing = false;
+    $('#reader').hidden = false; $('#editor').hidden = true;
+    renderWrite();
+  }
+
+  /* ================= 朗読（TTS） ================= */
+  function renderVoiceOptions() {
+    const p = state.novel.plot;
+    const opts = ['<option value="all">全章</option>'];
+    if (p) p.chapters.forEach((c, i) => {
+      const done = state.novel.chapters[i] && state.novel.chapters[i].text;
+      opts.push(`<option value="${i}"${done ? '' : ' disabled'}>第${i + 1}章　${esc(c.title)}${done ? '' : '（未執筆）'}</option>`);
+    });
+    const keep = $('#tts-scope').value;
+    $('#tts-scope').innerHTML = opts.join('');
+    if (keep && $(`#tts-scope option[value="${keep}"]`)) $('#tts-scope').value = keep;
+  }
+
+  function splitForTts(text, max) {
+    const out = [];
+    let buf = '';
+    const push = () => { if (buf.trim()) out.push(buf.trim()); buf = ''; };
+    text.split('\n').map(s => s.trim()).filter(Boolean).forEach(para => {
+      const sentences = para.split(/(?<=[。！？!?」])/);
+      sentences.forEach(sen => {
+        while (sen.length > max) { push(); out.push(sen.slice(0, max)); sen = sen.slice(max); }
+        if (buf.length + sen.length > max) push();
+        buf += sen;
       });
-    }
-  };
-
-  const ENGINES = { roulette: Roulette, amida: Amida, trump: Trump, omikuji: Omikuji };
-
-  function setHint(text) { $('#stageHint').textContent = text; }
-
-  function mountStage() {
-    if (state.drawing) return;
-    ENGINES[state.mode].mount($('#stage'), state.items.slice());
-    $('#drawBtn').textContent = MODE_BUTTON[state.mode];
-    setHint(MODE_HINT[state.mode]);
-  }
-
-  function relayoutStage() {
-    const eng = ENGINES[state.mode];
-    if (!state.drawing && eng && eng.relayout && !$('#mainView').hidden) eng.relayout();
-  }
-
-  function setMode(m) {
-    state.mode = MODE_LABEL[m] ? m : 'roulette';
-    LS.set(KEY.mode, state.mode);
-    const radio = $(`input[name="mode"][value="${state.mode}"]`);
-    if (radio) radio.checked = true;
-    mountStage();
-  }
-
-  async function startDraw() {
-    if (state.drawing) return;
-    if (state.items.length < 2) return toast('選択肢を2個以上入れてください');
-    state.drawing = true;
-    $('#drawBtn').disabled = true;
-    $$('input[name="mode"]').forEach((r) => { r.disabled = true; });
-    try {
-      const r = await ENGINES[state.mode].run();
-      await sleep(reduceMotion ? 100 : 450);
-      showResult(r);
-    } catch (err) {
-      toast(err.message);
-    } finally {
-      state.drawing = false;
-      $('#drawBtn').disabled = false;
-      $$('input[name="mode"]').forEach((r) => { r.disabled = false; });
-    }
-  }
-
-  /* ============================== 結果表示・Earth Studio ============================== */
-  async function showResult({ result, fortune }) {
-    const dlg = $('#resultDialog');
-    $('#resultLead').textContent = `${MODE_LABEL[state.mode]}が決めた、今日やることは`;
-    $('#resultText').textContent = result;
-    const f = $('#resultFortune');
-    f.hidden = !fortune;
-    f.textContent = fortune === '凶' ? '凶 …でも、やれば運気は上向き' : (fortune || '');
-    clearMedia();
-    $('#earthLink').hidden = true;
-    dlg.classList.remove('reveal');
-    if (!dlg.open) dlg.showModal();
-    void dlg.offsetWidth;
-    dlg.classList.add('reveal');
-
-    const draw = { drawId: null, result, fortune: fortune || '', mode: state.mode };
-    state.lastDraw = draw;
-    state.lastDrawSaving = api('saveDraw', { mode: state.mode, items: state.items, result, fortune: fortune || '' }, { silent: true })
-      .then((r) => {
-        draw.drawId = r.drawId;
-        if (dlg.open && state.lastDraw === draw) applyEarth(r.earth);
-      })
-      .catch((err) => toast(`結果を記録できませんでした：${err.message}`));
-  }
-
-  function clearMedia() {
-    const m = $('#resultMedia');
-    m.innerHTML = '';
-    m.hidden = true;
-  }
-
-  function applyEarth(earth) {
-    if (!earth || !earth.isOutdoor) return;
-    if (earth.earthUrl) {
-      const a = $('#earthLink');
-      a.href = earth.earthUrl;
-      a.hidden = false;
-    }
-    if (!earth.video) return;
-    const m = $('#resultMedia');
-    const cap = earth.video.title ? `<span class="media-caption">${esc(earth.video.title)}</span>` : '';
-    const v = document.createElement('video');
-    v.muted = true;
-    v.autoplay = true;
-    v.loop = true;
-    v.playsInline = true;
-    v.setAttribute('playsinline', '');
-    v.src = earth.video.videoUrl;
-    v.addEventListener('error', () => {
-      // Driveの直接再生ができない場合はプレビュー（タップで再生）に切り替える
-      m.innerHTML = `<iframe src="${esc(earth.video.previewUrl)}" allow="autoplay" title="おでかけ演出動画"></iframe>${cap}`;
-    }, { once: true });
-    m.innerHTML = '';
-    m.appendChild(v);
-    m.insertAdjacentHTML('beforeend', cap);
-    m.hidden = false;
-    v.play().catch(() => { /* 自動再生不可でも表示は続ける */ });
-  }
-
-  /* ============================== 日記 ============================== */
-  function resetDiaryForm() {
-    state.editingId = null;
-    state.photos = [];
-    $('#diaryForm').reset();
-    $('#dDate').value = todayStr();
-    $('#diaryFormTitle').textContent = '今日の日記';
-    $('#aiCommentBox').hidden = true;
-    $('#dAiComment').textContent = '';
-    $('#interim').textContent = '';
-    linkDraw(null);
-    renderPhotoPreview();
-  }
-
-  function linkDraw(draw, outcome) {
-    state.linkedDraw = draw && draw.drawId ? draw : null;
-    $('#linkedDraw').hidden = !state.linkedDraw;
-    if (state.linkedDraw) {
-      $('#linkedResult').textContent = state.linkedDraw.result;
-      const v = outcome || 'followed';
-      $$('input[name="outcome"]').forEach((r) => { r.checked = r.value === v; });
-    }
-  }
-
-  async function goDiaryFromResult() {
-    $('#resultDialog').close();
-    const d = state.lastDraw;
-    if (!d) return;
-    if (!d.drawId && state.lastDrawSaving) {
-      busy(true, 'くじの結果を記録しています…');
-      try { await state.lastDrawSaving; } finally { busy(false); }
-    }
-    if (state.editingId) resetDiaryForm();
-    linkDraw(d);
-    if (!$('#dTitle').value) $('#dTitle').value = d.result;
-    if (!$('#dRaw').value) $('#dRaw').value = `今日はくじで「${d.result}」をやることになった。`;
-    switchTab('diary');
-    $('#diaryForm').scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' });
-    $('#dRaw').focus();
-  }
-
-  // ---- 音声入力（Web Speech API） ----
-  let recognizer = null;
-  let listening = false;
-  function setMicUi(on) {
-    const b = $('#micBtn');
-    b.setAttribute('aria-pressed', String(on));
-    b.textContent = on ? '■ 話し終えたら押す' : '🎤 話して入力';
-  }
-  function stopListening() {
-    listening = false;
-    if (recognizer) { try { recognizer.stop(); } catch { /* noop */ } }
-    setMicUi(false);
-  }
-  function toggleMic() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return toast('このブラウザは音声入力に対応していません。Chrome か Safari でお試しください');
-    if (listening) return stopListening();
-    recognizer = new SR();
-    recognizer.lang = 'ja-JP';
-    recognizer.continuous = true;
-    recognizer.interimResults = true;
-    const ta = $('#dRaw');
-    recognizer.onresult = (e) => {
-      let interim = '';
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) {
-          const sep = ta.value && !/[。、！？\s]$/.test(ta.value) ? '。' : '';
-          ta.value += sep + t;
-        } else {
-          interim += t;
-        }
-      }
-      $('#interim').textContent = interim;
-    };
-    recognizer.onerror = (e) => {
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-        listening = false;
-        toast('マイクの使用が許可されていません。ブラウザの設定を確認してください');
-      }
-    };
-    recognizer.onend = () => {
-      $('#interim').textContent = '';
-      if (listening) { try { recognizer.start(); } catch { stopListening(); } }
-      else setMicUi(false);
-    };
-    listening = true;
-    setMicUi(true);
-    try { recognizer.start(); } catch { stopListening(); }
-  }
-
-  async function structureDiary() {
-    const text = $('#dRaw').value.trim();
-    if (!text) return toast('先に「今日のこと」を話すか書いてください');
-    stopListening();
-    try {
-      const r = await api('structureDiary', { text, drawResult: state.linkedDraw ? state.linkedDraw.result : '' }, { busyText: 'AIが日記に清書しています…' });
-      const d = r.diary;
-      $('#dTitle').value = d.title || $('#dTitle').value;
-      $('#dDid').value = d.did || '';
-      $('#dFeeling').value = d.feeling || '';
-      $('#dNext').value = d.nextWant || '';
-      setScore(d.emotionScore);
-      setAiComment(d.aiComment);
-      toast('清書しました。必要なら手直ししてください');
-    } catch (err) {
-      toast(err.message);
-    }
-  }
-
-  function setScore(v) {
-    $$('input[name="dScore"]').forEach((r) => { r.checked = Number(r.value) === Number(v); });
-  }
-  function getScore() {
-    const r = $('input[name="dScore"]:checked');
-    return r ? Number(r.value) : null;
-  }
-  function setAiComment(text) {
-    $('#dAiComment').textContent = text || '';
-    $('#aiCommentBox').hidden = !text;
-  }
-
-  // ---- 写真 ----
-  const photoCache = new Map();
-  let photoQueue = Promise.resolve();
-
-  function resizeImage(file) {
-    return new Promise((resolve, reject) => {
-      const url = URL.createObjectURL(file);
-      const img = new Image();
-      img.onload = () => {
-        const max = CONFIG.PHOTO_MAX_SIDE || 1280;
-        const s = Math.min(1, max / Math.max(img.width, img.height));
-        const w = Math.round(img.width * s), h = Math.round(img.height * s);
-        const c = document.createElement('canvas');
-        c.width = w;
-        c.height = h;
-        c.getContext('2d').drawImage(img, 0, 0, w, h);
-        URL.revokeObjectURL(url);
-        const dataUrl = c.toDataURL('image/jpeg', CONFIG.PHOTO_QUALITY || 0.85);
-        resolve({ dataUrl, base64: dataUrl.split(',')[1] });
-      };
-      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('画像を読み込めませんでした')); };
-      img.src = url;
+      if (buf.length > max * 0.6) push(); else buf += '\n';
     });
-  }
-
-  async function onPhotosChosen(e) {
-    const files = Array.from(e.target.files || []);
-    e.target.value = '';
-    const max = CONFIG.PHOTO_MAX_COUNT || 6;
-    for (const f of files) {
-      if (state.photos.length >= max) { toast(`写真は${max}枚までです`); break; }
-      try {
-        const p = await resizeImage(f);
-        state.photos.push({ local: true, ...p });
-      } catch (err) {
-        toast(err.message);
-      }
-    }
-    renderPhotoPreview();
-  }
-
-  function renderPhotoPreview() {
-    const box = $('#photoPreview');
-    box.innerHTML = '';
-    state.photos.forEach((p, i) => {
-      const d = document.createElement('div');
-      d.className = 'thumb';
-      d.innerHTML = `<img alt="添付写真${i + 1}"><button type="button" aria-label="写真${i + 1}を外す">×</button>`;
-      const img = $('img', d);
-      if (p.dataUrl) img.src = p.dataUrl;
-      else if (p.fileId) loadPhoto(p.fileId, img);
-      $('button', d).addEventListener('click', () => { state.photos.splice(i, 1); renderPhotoPreview(); });
-      box.appendChild(d);
-    });
-  }
-
-  function loadPhoto(fileId, img) {
-    if (photoCache.has(fileId)) { img.src = photoCache.get(fileId); return; }
-    photoQueue = photoQueue.then(async () => {
-      if (photoCache.has(fileId)) { img.src = photoCache.get(fileId); return; }
-      try {
-        const r = await api('getPhoto', { fileId }, { silent: true });
-        const url = `data:${r.mimeType};base64,${r.dataBase64}`;
-        photoCache.set(fileId, url);
-        img.src = url;
-      } catch {
-        img.alt = '写真を読み込めませんでした';
-      }
-    });
-  }
-
-  async function onSaveDiary(e) {
-    e.preventDefault();
-    stopListening();
-    const title = $('#dTitle').value.trim();
-    const did = $('#dDid').value.trim();
-    const raw = $('#dRaw').value.trim();
-    if (!title && !did && !raw) return toast('タイトルか本文を入れてください');
-    try {
-      const photoIds = [];
-      for (const p of state.photos) {
-        if (!p.fileId) {
-          const r = await api('uploadPhoto', { dataBase64: p.base64, mimeType: 'image/jpeg' }, { busyText: '写真を保存しています…' });
-          p.fileId = r.fileId;
-          photoCache.set(r.fileId, p.dataUrl);
-        }
-        photoIds.push(p.fileId);
-      }
-      const ld = state.linkedDraw;
-      const outcomeEl = $('input[name="outcome"]:checked');
-      const diary = {
-        diaryId: state.editingId,
-        date: $('#dDate').value || todayStr(),
-        title, did,
-        feeling: $('#dFeeling').value.trim(),
-        emotionScore: getScore(),
-        nextWant: $('#dNext').value.trim(),
-        rawText: raw,
-        aiComment: $('#dAiComment').textContent,
-        drawId: ld ? ld.drawId : '',
-        drawResult: ld ? ld.result : '',
-        outcome: ld && outcomeEl ? outcomeEl.value : '',
-        photoIds
-      };
-      await api('saveDiary', { diary }, { busyText: '日記を保存しています…' });
-      toast(state.editingId ? '日記を更新しました' : '日記を保存しました');
-      resetDiaryForm();
-      loadDiaries(true);
-    } catch (err) {
-      toast(err.message);
-    }
-  }
-
-  async function loadDiaries(reset) {
-    if (reset) { state.diaries = []; $('#diaryList').innerHTML = ''; }
-    try {
-      const r = await api('listDiaries', { limit: CONFIG.DIARY_PAGE_SIZE || 20, offset: state.diaries.length }, { silent: !reset });
-      state.diaryTotal = r.total;
-      r.diaries.forEach((d) => { state.diaries.push(d); $('#diaryList').appendChild(renderDiaryCard(d)); });
-      if (!state.diaries.length) {
-        $('#diaryList').innerHTML = '<p class="empty">まだ日記はありません。くじを引いたら「日記に書く」から始めましょう。</p>';
-      }
-      $('#moreDiaryBtn').hidden = state.diaries.length >= state.diaryTotal;
-    } catch (err) {
-      toast(err.message);
-    }
-  }
-
-  function diarySpeechText(d) {
-    return [d.title, d.did, d.feeling, d.nextWant ? `次は、${d.nextWant}` : '', d.aiComment ? `AIからひとこと。${d.aiComment}` : '']
-      .filter(Boolean).join('。');
-  }
-
-  function renderDiaryCard(d) {
-    const a = document.createElement('article');
-    a.className = 'diary-card';
-    if (d.emotionScore) a.style.setProperty('--score-color', SCORE_COLORS[d.emotionScore]);
-    a.innerHTML = `
-      <div class="diary-meta"><span>${esc(fmtDate(d.date))}</span><span class="diary-face" aria-label="気分${d.emotionScore || 'なし'}">${FACES[d.emotionScore] || ''}</span></div>
-      <h3>${esc(d.title)}</h3>
-      ${d.drawResult ? `<p class="diary-chip">🎲 ${esc(d.drawResult)}${d.outcome ? `｜${esc(OUTCOME_LABEL[d.outcome] || '')}` : ''}</p>` : ''}
-      ${d.did ? `<div><p class="diary-sub">やったこと</p><p class="diary-text">${esc(d.did)}</p></div>` : ''}
-      ${d.feeling ? `<div><p class="diary-sub">感想</p><p class="diary-text">${esc(d.feeling)}</p></div>` : ''}
-      ${d.nextWant ? `<div><p class="diary-sub">次回やりたいこと</p><p class="diary-text">${esc(d.nextWant)}</p></div>` : ''}
-      ${d.aiComment ? `<div class="ai-comment"><p class="ai-comment-label">AIのひとこと</p><p>${esc(d.aiComment)}</p></div>` : ''}
-      ${d.photoIds && d.photoIds.length ? `<div class="photo-grid">${d.photoIds.map((_, i) => `<div class="thumb"><img alt="日記の写真${i + 1}"></div>`).join('')}</div>` : ''}
-      <div class="diary-actions">
-        <button type="button" class="btn" data-act="speak">🔊 読み上げ</button>
-        <button type="button" class="btn" data-act="edit">編集</button>
-        <button type="button" class="btn" data-act="delete">削除</button>
-      </div>`;
-    $$('.photo-grid img', a).forEach((img, i) => loadPhoto(d.photoIds[i], img));
-    $('[data-act="speak"]', a).addEventListener('click', (e) => speak(diarySpeechText(d), e.currentTarget));
-    $('[data-act="edit"]', a).addEventListener('click', () => editDiary(d));
-    $('[data-act="delete"]', a).addEventListener('click', () => deleteDiary(d, a));
-    return a;
-  }
-
-  function editDiary(d) {
-    resetDiaryForm();
-    state.editingId = d.diaryId;
-    $('#diaryFormTitle').textContent = '日記を編集';
-    $('#dDate').value = d.date || todayStr();
-    $('#dRaw').value = d.rawText || '';
-    $('#dTitle').value = d.title || '';
-    $('#dDid').value = d.did || '';
-    $('#dFeeling').value = d.feeling || '';
-    $('#dNext').value = d.nextWant || '';
-    setScore(d.emotionScore);
-    setAiComment(d.aiComment);
-    if (d.drawId) linkDraw({ drawId: d.drawId, result: d.drawResult || '（くじの結果）' }, d.outcome);
-    state.photos = (d.photoIds || []).map((fileId) => ({ fileId }));
-    renderPhotoPreview();
-    $('#diaryForm').scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' });
-  }
-
-  async function deleteDiary(d, el) {
-    if (!confirm(`「${d.title}」を削除します。写真も一緒に削除されます。よろしいですか？`)) return;
-    try {
-      await api('deleteDiary', { diaryId: d.diaryId }, { busyText: '削除しています…' });
-      el.remove();
-      state.diaries = state.diaries.filter((x) => x.diaryId !== d.diaryId);
-      state.diaryTotal = Math.max(0, state.diaryTotal - 1);
-      if (state.editingId === d.diaryId) resetDiaryForm();
-      if (!state.diaries.length) loadDiaries(true);
-      toast('日記を削除しました');
-    } catch (err) {
-      toast(err.message);
-    }
-  }
-
-  /* ============================== 読み上げ（Gemini TTS） ============================== */
-  let currentAudio = null;
-  let currentBtn = null;
-
-  function base64ToBytes(b64) {
-    const bin = atob(b64);
-    const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    push();
     return out;
   }
-  function pcmToWav(pcm, rate) {
-    const header = new ArrayBuffer(44);
-    const v = new DataView(header);
-    const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
-    w(0, 'RIFF'); v.setUint32(4, 36 + pcm.length, true); w(8, 'WAVE');
-    w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
-    w(36, 'data'); v.setUint32(40, pcm.length, true);
-    return new Blob([header, pcm], { type: 'audio/wav' });
-  }
-  function toAudioBlob(b64, mime) {
-    const bytes = base64ToBytes(b64);
-    if (/L16|pcm/i.test(mime)) {
-      const m = /rate=(\d+)/.exec(mime);
-      return pcmToWav(bytes, m ? Number(m[1]) : 24000);
-    }
-    return new Blob([bytes], { type: mime });
+
+  function b64ToBytes(b64) {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
   }
 
-  function stopSpeaking() {
-    if (currentAudio) { currentAudio.pause(); currentAudio = null; }
-    if ('speechSynthesis' in window) speechSynthesis.cancel();
-    if (currentBtn) currentBtn.classList.remove('playing');
-    currentBtn = null;
-  }
+  async function generateTts() {
+    const p = state.novel.plot;
+    if (!p) { toast('先に本文を書いてください', true); return; }
+    const scope = $('#tts-scope').value;
+    const idxs = scope === 'all'
+      ? p.chapters.map((_, i) => i).filter(i => state.novel.chapters[i] && state.novel.chapters[i].text)
+      : [num(scope)];
+    if (!idxs.length) { toast('朗読できる本文がありません', true); return; }
 
-  async function speak(text, btn) {
-    if (btn && btn === currentBtn) return stopSpeaking(); // もう一度押すと停止
-    stopSpeaking();
-    if (!text) return;
-    currentBtn = btn || null;
-    if (btn) btn.classList.add('playing');
+    const jobs = [];
+    idxs.forEach(i => {
+      const ch = state.novel.chapters[i];
+      jobs.push({ chapter: i, text: `第${kanji(i + 1)}章、${p.chapters[i].title}。`, head: true });
+      splitForTts(ch.text, C.TTS_CHUNK_CHARS).forEach(t => jobs.push({ chapter: i, text: t }));
+    });
+
+    const voice = $('#tts-voice').value;
+    const style = pick(C.NARRATION_STYLES, $('#tts-style').value);
+    const toDrive = $('#tts-drive').checked;
+
+    stopAudio();
+    state.audio.chunks.forEach(c => URL.revokeObjectURL(c.url));
+    state.audio = { chunks: [], index: -1 };
+
+    state.abort = new AbortController();
+    setBusy(true, '音声を準備しています…');
     try {
-      const r = await api('tts', { text }, { busyText: '音声を作っています…' });
-      if (currentBtn !== (btn || null)) return; // 待っている間に別の再生が始まった
-      const url = URL.createObjectURL(toAudioBlob(r.data, r.mimeType));
-      const audio = new Audio(url);
-      currentAudio = audio;
-      audio.onended = () => { URL.revokeObjectURL(url); if (currentAudio === audio) stopSpeaking(); };
-      await audio.play();
-    } catch (err) {
-      if ('speechSynthesis' in window) {
-        const u = new SpeechSynthesisUtterance(text);
-        u.lang = 'ja-JP';
-        u.onend = () => stopSpeaking();
-        speechSynthesis.speak(u);
-        toast('AI音声が使えないため、端末の読み上げで再生します');
-      } else {
-        stopSpeaking();
-        toast(err.message);
+      if (toDrive && !state.novel.novelId) {
+        status('音声の保存先を作るため、先に作品をドライブに保存しています…');
+        await saveToDrive(true);
       }
-    }
-  }
-
-  /* ============================== 分析 ============================== */
-  async function analyze() {
-    $('#statsEmpty').hidden = true;
-    try {
-      const r = await api('analyze', {}, { busyText: 'AIがあなたの過ごし方を占っています…' });
-      if (r.empty) {
-        $('#statsResult').hidden = true;
-        $('#statsEmpty').textContent = r.message;
-        $('#statsEmpty').hidden = false;
-        return;
+      for (let k = 0; k < jobs.length; k++) {
+        const j = jobs[k];
+        status(`音声を作っています…（${k + 1}／${jobs.length}）`);
+        const r = await api('tts', {
+          text: j.text, voice, stylePrompt: style.prompt,
+          novelId: toDrive ? state.novel.novelId : '',
+          fileName: `ch${String(j.chapter + 1).padStart(2, '0')}_${String(k + 1).padStart(3, '0')}.wav`
+        }, { signal: state.abort.signal });
+        const bytes = b64ToBytes(r.audioBase64);
+        const blob = new Blob([bytes], { type: 'audio/wav' });
+        state.audio.chunks.push({
+          chapter: j.chapter,
+          label: j.head ? `第${j.chapter + 1}章 章題` : j.text.slice(0, 28) + (j.text.length > 28 ? '…' : ''),
+          text: j.text, url: URL.createObjectURL(blob), bytes, fileUrl: r.fileUrl || ''
+        });
+        renderPlaylist();
+        if (k === 0) loadChunk(0, false);
       }
-      state.stats = r.stats;
-      state.persona = r.persona;
-      renderStats();
-      $('#statsResult').hidden = false;
-      await drawShareCard();
-      $('.persona').scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' });
+      toast(`音声を${jobs.length}個作りました`);
     } catch (err) {
-      toast(err.message);
+      if (err.code !== 'ABORT') toast(err.message, true);
+      else if (state.audio.chunks.length) toast(`中断しました（${state.audio.chunks.length}個まで作成済み）`);
+    } finally { setBusy(false); }
+  }
+
+  function renderPlaylist() {
+    const chunks = state.audio.chunks;
+    $('#player').hidden = !chunks.length;
+    $('#pl-list').innerHTML = chunks.map((c, i) => `<li data-i="${i}" class="${i === state.audio.index ? 'is-current' : ''}">
+      ${esc(c.label)}${c.fileUrl ? ` <a href="${esc(c.fileUrl)}" target="_blank" rel="noopener">ドライブ</a>` : ''}</li>`).join('');
+  }
+
+  function loadChunk(i, autoplay = true) {
+    const c = state.audio.chunks[i];
+    if (!c) return;
+    state.audio.index = i;
+    const a = $('#audio');
+    a.src = c.url;
+    $('#pl-now').textContent = c.text;
+    renderPlaylist();
+    if (autoplay) a.play().catch(() => {});
+  }
+
+  function stopAudio() {
+    const a = $('#audio');
+    if (a) { a.pause(); a.removeAttribute('src'); a.load(); }
+  }
+
+  const fmtTime = s => { s = Math.max(0, Math.floor(s || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+
+  function bindPlayer() {
+    const a = $('#audio');
+    $('#pl-play').addEventListener('click', () => {
+      if (state.audio.index < 0) loadChunk(0);
+      else if (a.paused) a.play().catch(() => {}); else a.pause();
+    });
+    $('#pl-prev').addEventListener('click', () => loadChunk(Math.max(0, state.audio.index - 1)));
+    $('#pl-next').addEventListener('click', () => loadChunk(Math.min(state.audio.chunks.length - 1, state.audio.index + 1)));
+    a.addEventListener('play', () => { $('#pl-play').textContent = '一時停止'; });
+    a.addEventListener('pause', () => { $('#pl-play').textContent = '再生'; });
+    a.addEventListener('ended', () => {
+      if (state.audio.index < state.audio.chunks.length - 1) loadChunk(state.audio.index + 1);
+    });
+    a.addEventListener('timeupdate', () => {
+      if (a.duration) $('#pl-seek').value = String(Math.round(a.currentTime / a.duration * 1000));
+      $('#pl-time').textContent = `${fmtTime(a.currentTime)} / ${fmtTime(a.duration)}`;
+    });
+    $('#pl-seek').addEventListener('input', e => { if (a.duration) a.currentTime = a.duration * num(e.target.value) / 1000; });
+    $('#pl-list').addEventListener('click', e => {
+      if (e.target.closest('a')) return;
+      const li = e.target.closest('li'); if (li) loadChunk(num(li.dataset.i));
+    });
+    $('#pl-dl-one').addEventListener('click', () => {
+      const c = state.audio.chunks[state.audio.index]; if (!c) return;
+      download(`${safeFile(state.novel.title)}_${String(state.audio.index + 1).padStart(3, '0')}.wav`, new Blob([c.bytes], { type: 'audio/wav' }));
+    });
+    $('#pl-dl-all').addEventListener('click', () => {
+      if (!state.audio.chunks.length) return;
+      download(`${safeFile(state.novel.title)}_朗読.wav`, mergeWavs(state.audio.chunks.map(c => c.bytes)));
+    });
+  }
+
+  // 複数WAV(同一フォーマット)のPCMをつないで1本にする
+  function mergeWavs(list) {
+    const parsed = list.map(parseWav).filter(Boolean);
+    if (!parsed.length) throw new Error('音声を結合できませんでした');
+    const { sampleRate, channels, bits } = parsed[0];
+    const total = parsed.reduce((a, p) => a + p.data.length, 0);
+    const out = new Uint8Array(44 + total);
+    const v = new DataView(out.buffer);
+    const w = (o, s) => { for (let i = 0; i < s.length; i++) out[o + i] = s.charCodeAt(i); };
+    w(0, 'RIFF'); v.setUint32(4, 36 + total, true); w(8, 'WAVE');
+    w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, channels, true);
+    v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate * channels * bits / 8, true);
+    v.setUint16(32, channels * bits / 8, true); v.setUint16(34, bits, true);
+    w(36, 'data'); v.setUint32(40, total, true);
+    let off = 44;
+    parsed.forEach(p => { out.set(p.data, off); off += p.data.length; });
+    return new Blob([out], { type: 'audio/wav' });
+  }
+
+  function parseWav(bytes) {
+    const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const str = (o, n) => String.fromCharCode(...bytes.slice(o, o + n));
+    if (str(0, 4) !== 'RIFF' || str(8, 4) !== 'WAVE') return null;
+    let o = 12, fmt = null;
+    while (o + 8 <= bytes.length) {
+      const id = str(o, 4), size = v.getUint32(o + 4, true);
+      if (id === 'fmt ') fmt = { channels: v.getUint16(o + 10, true), sampleRate: v.getUint32(o + 12, true), bits: v.getUint16(o + 22, true) };
+      if (id === 'data' && fmt) return Object.assign(fmt, { data: bytes.slice(o + 8, o + 8 + size) });
+      o += 8 + size + (size % 2);
     }
+    return null;
   }
 
-  function bars(container, rows) {
-    const max = Math.max(1, ...rows.map((r) => r.value));
-    container.innerHTML = rows.map((r) => `
-      <div class="bar-row"><span>${esc(r.label)}</span>
-        <span class="bar-track"><span class="bar-fill" style="width:${Math.round(r.value / max * 100)}%"></span></span>
-        <span class="num">${r.value}</span></div>`).join('');
-  }
-
-  function renderStats() {
-    const s = state.stats, p = state.persona;
-    $('#pLevel').textContent = `Lv.${p.level}`;
-    $('#pType').textContent = `『${p.typeName}』`;
-    $('#pDesc').textContent = p.description || '';
-    $('#pTags').textContent = (p.tags || []).join(' ');
-    $('#pLucky').textContent = p.luckyAction || '';
-    $('#pComment').textContent = p.comment || '';
-
-    const stat = (value, label) => `<div class="stat"><b>${esc(value)}</b><span>${esc(label)}</span></div>`;
-    $('#statGrid').innerHTML = [
-      stat(`${s.totalDraws}回`, 'くじを引いた'),
-      stat(`${s.totalDiaries}件`, '日記'),
-      stat(s.rebelRate === null ? '—' : `${s.rebelRate}%`, 'くじへの反逆率'),
-      stat(s.avgEmotion === null ? '—' : `${s.avgEmotion}`, '平均気分（5点満点）'),
-      stat(s.outdoorRate === null ? '—' : `${s.outdoorRate}%`, 'おでかけ率'),
-      stat(`${s.streak}日`, '日記の連続記録')
-    ].join('');
-
-    bars($('#modeBars'), Object.keys(MODE_LABEL).map((k) => ({ label: MODE_LABEL[k], value: s.modeCounts[k] || 0 })));
-    bars($('#weekBars'), WEEK.map((w, i) => ({ label: `${w}曜`, value: s.weekCounts[i] || 0 })));
-    $('#topResults').innerHTML = s.topResults.length
-      ? s.topResults.map((t) => `<li>${esc(t.name)} <small>${t.count}回</small></li>`).join('')
-      : '<li>まだありません</li>';
-  }
-
-  function personaSpeech() {
-    const p = state.persona;
+  /* ================= ロケ地（Google Earth Studio 用） ================= */
+  function fullText() {
+    const p = state.novel.plot;
     if (!p) return '';
-    return `あなたの冒険者タイプは、${p.typeName}。レベル${p.level}。${p.description}。次の開運アクションは、${p.luckyAction}。${p.comment}`;
+    return p.chapters.map((c, i) => {
+      const ch = state.novel.chapters[i];
+      return ch && ch.text ? `【第${i + 1}章 ${c.title}】\n${ch.text}` : '';
+    }).filter(Boolean).join('\n\n');
   }
 
-  // ---- シェアカード ----
-  function roundRect(ctx, x, y, w, h, r) {
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.arcTo(x + w, y, x + w, y + h, r);
-    ctx.arcTo(x + w, y + h, x, y + h, r);
-    ctx.arcTo(x, y + h, x, y, r);
-    ctx.arcTo(x, y, x + w, y, r);
-    ctx.closePath();
+  async function extractLocations() {
+    const p = state.novel.plot;
+    const text = fullText();
+    if (!p || !text) { toast('先に本文を書いてください', true); return; }
+    state.abort = new AbortController();
+    setBusy(true, '本文からロケ地を拾っています…');
+    try {
+      const r = await gemini({ prompt: buildLocationPrompt(p, text.slice(0, 120000)), json: true, maxTokens: 8192, temperature: 0.2 });
+      const data = parseJsonLoose(r.text);
+      const list = (Array.isArray(data.locations) ? data.locations : [])
+        .map(l => ({
+          name: String(l.name || l.realPlace || ''),
+          realPlace: String(l.realPlace || ''),
+          fictional: !!l.fictional,
+          chapter: num(l.chapter, 1),
+          scene: String(l.scene || ''),
+          lat: num(l.lat, NaN), lng: num(l.lng, NaN),
+          groundAltitude: num(l.groundAltitude, 0),
+          range: Math.min(50000, Math.max(100, num(l.range, 800))),
+          tilt: Math.min(85, Math.max(0, num(l.tilt, 60))),
+          heading: ((num(l.heading, 0) % 360) + 360) % 360,
+          durationSec: Math.min(20, Math.max(2, num(l.durationSec, 6)))
+        }))
+        .filter(l => Number.isFinite(l.lat) && Number.isFinite(l.lng) && Math.abs(l.lat) <= 90 && Math.abs(l.lng) <= 180)
+        .slice(0, C.LOCATION_MAX);
+      if (!list.length) throw new Error('ロケ地を見つけられませんでした');
+      state.novel.locations = list;
+      saveDraft();
+      renderLocations();
+      toast(`${list.length}か所のロケ地を拾いました`);
+    } catch (err) {
+      if (err.code !== 'ABORT') toast(err.message, true);
+    } finally { setBusy(false); }
   }
-  function wrapText(ctx, text, x, y, maxW, lineH, maxLines) {
-    const chars = Array.from(String(text || ''));
-    let line = '', lines = 0;
-    for (let i = 0; i < chars.length; i++) {
-      const test = line + chars[i];
-      if (ctx.measureText(test).width > maxW && line) {
-        if (lines === maxLines - 1) { ctx.fillText(fitText(ctx, line + chars.slice(i).join(''), maxW), x, y); return y + lineH; }
-        ctx.fillText(line, x, y);
-        line = chars[i];
-        y += lineH;
-        lines++;
-      } else {
-        line = test;
+
+  function earthWebUrl(l) {
+    return `https://earth.google.com/web/@${l.lat},${l.lng},${Math.round(l.groundAltitude)}a,${Math.round(l.range)}d,35y,${Math.round(l.heading)}h,${Math.round(l.tilt)}t,0r`;
+  }
+
+  function renderLocations() {
+    const list = state.novel.locations || [];
+    $('#loc-table').hidden = !list.length;
+    $('#loc-body').innerHTML = list.map((l, i) => `
+      <tr data-i="${i}">
+        <td>${l.chapter}</td>
+        <td><span class="loc-name">${esc(l.name)}</span>
+          <span class="loc-scene">${esc(l.realPlace)}${l.fictional ? '（置き換え）' : ''}／${esc(l.scene)}</span></td>
+        <td><input type="number" step="0.000001" data-k="lat" value="${l.lat}" aria-label="緯度"></td>
+        <td><input type="number" step="0.000001" data-k="lng" value="${l.lng}" aria-label="経度"></td>
+        <td><input type="number" step="10" data-k="range" value="${l.range}" aria-label="距離"></td>
+        <td><input type="number" step="1" data-k="tilt" value="${l.tilt}" aria-label="傾き"></td>
+        <td><input type="number" step="1" data-k="heading" value="${l.heading}" aria-label="方位"></td>
+        <td><input type="number" step="1" data-k="durationSec" value="${l.durationSec}" aria-label="秒"></td>
+        <td><a href="${esc(earthWebUrl(l))}" target="_blank" rel="noopener">下見</a></td>
+      </tr>`).join('');
+    refreshEarthButtons();
+  }
+
+  function refreshEarthButtons() {
+    const has = (state.novel.locations || []).length > 0;
+    $('#btn-kml').disabled = state.busy || !has;
+    $('#btn-earth-json').disabled = state.busy || !has;
+  }
+
+  // LookAt（見る地点・距離・傾き・方位）からカメラ位置を計算
+  function cameraFromLookAt(l) {
+    const t = l.tilt * Math.PI / 180, h = l.heading * Math.PI / 180;
+    const horiz = l.range * Math.sin(t);
+    const up = l.range * Math.cos(t);
+    const dN = -horiz * Math.cos(h), dE = -horiz * Math.sin(h);
+    return {
+      lat: +(l.lat + dN / 111320).toFixed(7),
+      lng: +(l.lng + dE / (111320 * Math.cos(l.lat * Math.PI / 180))).toFixed(7),
+      altitude: Math.round(l.groundAltitude + up)
+    };
+  }
+
+  function buildKml() {
+    const list = state.novel.locations;
+    const title = state.novel.title || '無題';
+    const lookAt = l => `<LookAt><longitude>${l.lng}</longitude><latitude>${l.lat}</latitude><altitude>${l.groundAltitude}</altitude><heading>${l.heading}</heading><tilt>${l.tilt}</tilt><range>${l.range}</range><altitudeMode>absolute</altitudeMode></LookAt>`;
+    const marks = list.map(l => `
+      <Placemark>
+        <name>${xmlEsc(l.name)}</name>
+        <description>${xmlEsc(`第${l.chapter}章／${l.realPlace}${l.fictional ? '（置き換え）' : ''}／${l.scene}`)}</description>
+        ${lookAt(l)}
+        <styleUrl>#loc</styleUrl>
+        <Point><coordinates>${l.lng},${l.lat},0</coordinates></Point>
+      </Placemark>`).join('');
+    const tour = list.map(l => `
+        <gx:FlyTo><gx:duration>${l.durationSec}</gx:duration><gx:flyToMode>smooth</gx:flyToMode>${lookAt(l)}</gx:FlyTo>
+        <gx:Wait><gx:duration>2</gx:duration></gx:Wait>`).join('');
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
+  <Document>
+    <name>${xmlEsc(title)} ロケ地</name>
+    <Style id="loc"><IconStyle><scale>1.1</scale></IconStyle><LabelStyle><scale>1.0</scale></LabelStyle></Style>
+    <Folder><name>ロケ地</name>${marks}
+    </Folder>
+    <gx:Tour>
+      <name>${xmlEsc(title)} 空撮ツアー</name>
+      <gx:Playlist>${tour}
+      </gx:Playlist>
+    </gx:Tour>
+  </Document>
+</kml>`;
+  }
+
+  function buildEarthJson() {
+    let t = 0;
+    const keyframes = state.novel.locations.map(l => {
+      const start = t;
+      t += l.durationSec + 2;
+      return {
+        timeSec: start + l.durationSec, // 到着時刻（ここに Earth Studio のキーフレームを打つ）
+        holdSec: 2,
+        name: l.name, realPlace: l.realPlace, fictional: l.fictional, chapter: l.chapter, scene: l.scene,
+        target: { latitude: l.lat, longitude: l.lng, altitude: l.groundAltitude },
+        lookAt: { range: l.range, tilt: l.tilt, heading: l.heading },
+        camera: cameraFromLookAt(l)
+      };
+    });
+    return {
+      format: 'shosetsu-kobo/earth-studio-track',
+      version: C.VERSION,
+      title: state.novel.title,
+      fps: 30,
+      totalDurationSec: t,
+      note: 'tilt: 0=真下, 90=水平 / heading: 0=北・時計回り / altitude: m（海抜）',
+      keyframes
+    };
+  }
+
+  function bindLocationTable() {
+    $('#loc-body').addEventListener('change', e => {
+      const inp = e.target.closest('input'); if (!inp) return;
+      const l = state.novel.locations[num(inp.closest('tr').dataset.i)];
+      l[inp.dataset.k] = num(inp.value, l[inp.dataset.k]);
+      saveDraft();
+      const a = inp.closest('tr').querySelector('a');
+      if (a) a.href = earthWebUrl(l);
+    });
+  }
+
+  /* ================= 書き出し・ドライブ保存 ================= */
+  function buildMarkdown() {
+    const n = state.novel, p = n.plot;
+    if (!p) return '';
+    const out = [`# ${p.title}`, '', p.logline ? `> ${p.logline}` : '', ''];
+    p.chapters.forEach((c, i) => {
+      const ch = n.chapters[i];
+      if (!ch || !ch.text) return;
+      out.push(`## 第${kanji(i + 1)}章　${c.title}`, '');
+      ch.text.split('\n').forEach(l => out.push(l, ''));
+    });
+    return out.join('\n');
+  }
+
+  function buildPlainText() {
+    const n = state.novel, p = n.plot;
+    if (!p) return '';
+    const out = [p.title, '', ''];
+    p.chapters.forEach((c, i) => {
+      const ch = n.chapters[i];
+      if (!ch || !ch.text) return;
+      out.push(`第${kanji(i + 1)}章　${c.title}`, '', ch.text, '', '');
+    });
+    return out.join('\n');
+  }
+
+  function snapshot() {
+    const n = state.novel;
+    return {
+      novelId: n.novelId, title: n.title || (n.plot && n.plot.title) || '無題',
+      settings: n.settings || readSettings(), plot: n.plot,
+      chapters: n.chapters, locations: n.locations, appVersion: C.VERSION
+    };
+  }
+
+  async function saveToDrive(silent = false) {
+    if (!state.novel.plot) { if (!silent) toast('保存する作品がありません', true); return; }
+    const own = !silent;
+    if (own) { state.abort = new AbortController(); setBusy(true, 'Googleドライブに保存しています…'); }
+    try {
+      const hasLoc = (state.novel.locations || []).length > 0;
+      const r = await api('saveNovel', {
+        novel: snapshot(),
+        exports: {
+          markdown: buildMarkdown(),
+          text: buildPlainText(),
+          plotJson: JSON.stringify(state.novel.plot, null, 2),
+          earthJson: hasLoc ? JSON.stringify(buildEarthJson(), null, 2) : '',
+          kml: hasLoc ? buildKml() : ''
+        }
+      }, { signal: state.abort && state.abort.signal });
+      state.novel.novelId = r.novelId;
+      saveDraft();
+      $('#drive-link').innerHTML = `保存しました：<a href="${esc(r.folderUrl)}" target="_blank" rel="noopener">ドライブのフォルダを開く</a>`;
+      if (own) toast('Googleドライブに保存しました');
+      loadWorks();
+    } catch (err) {
+      if (!own) throw err;
+      if (err.code !== 'ABORT') toast(err.message, true);
+    } finally { if (own) setBusy(false); }
+  }
+
+  async function loadWorks() {
+    const ul = $('#works-list');
+    try {
+      const r = await api('listNovels', {});
+      if (!r.novels.length) { ul.innerHTML = '<li class="work-meta">まだ保存した作品はありません。</li>'; return; }
+      ul.innerHTML = r.novels.map(n => `<li>
+        <span class="work-title">${esc(n.title)}</span>
+        <span class="work-meta">${n.chapterCount}章・${fmtNum(n.charCount)}字・${esc(String(n.updatedAt).slice(0, 16).replace('T', ' '))}</span>
+        <a href="${esc(n.folderUrl)}" target="_blank" rel="noopener">ドライブ</a>
+        <button type="button" class="btn ghost small" data-load="${esc(n.novelId)}">開く</button>
+        <button type="button" class="btn ghost small" data-del="${esc(n.novelId)}">削除</button>
+      </li>`).join('');
+    } catch (err) {
+      if (err.code !== 'AUTH') ul.innerHTML = `<li class="work-meta">一覧を読み込めませんでした：${esc(err.message)}</li>`;
+    }
+  }
+
+  async function openWork(id) {
+    if (state.novel.plot && !confirm('今の作品を閉じて、保存した作品を開きます。保存していない変更は消えます。')) return;
+    state.abort = new AbortController();
+    setBusy(true, '作品を読み込んでいます…');
+    try {
+      const r = await api('loadNovel', { novelId: id }, { signal: state.abort.signal });
+      const n = r.novel;
+      state.novel = Object.assign(blankNovel(), n, { novelId: id });
+      state.current = 0;
+      writeSettings(n.settings);
+      saveDraft();
+      renderAll();
+      showPanel('write');
+      toast(`『${state.novel.title}』を開きました`);
+    } catch (err) {
+      if (err.code !== 'ABORT') toast(err.message, true);
+    } finally { setBusy(false); }
+  }
+
+  async function deleteWork(id) {
+    if (!confirm('この作品をドライブから削除します（ゴミ箱へ移動）。よろしいですか？')) return;
+    try {
+      await api('deleteNovel', { novelId: id });
+      if (state.novel.novelId === id) { state.novel.novelId = null; saveDraft(); }
+      toast('削除しました');
+      loadWorks();
+    } catch (err) { toast(err.message, true); }
+  }
+
+  function newWork() {
+    if (state.novel.plot && !confirm('新しい作品を始めます。今の作品は下書きから消えます（ドライブに保存済みのものは残ります）。')) return;
+    state.novel = blankNovel();
+    state.current = 0;
+    stopAudio();
+    state.audio.chunks.forEach(c => URL.revokeObjectURL(c.url));
+    state.audio = { chunks: [], index: -1 };
+    writeSettings(C.DEFAULTS);
+    $('#drive-link').textContent = '';
+    saveDraft();
+    renderAll();
+    showPanel('settings');
+  }
+
+  /* ================= 下書き（ブラウザ内） ================= */
+  const saveDraft = debounce(() => {
+    state.novel.updatedAt = new Date().toISOString();
+    store.set(LS.draft, state.novel);
+  }, 400);
+
+  function restoreDraft() {
+    const d = store.get(LS.draft);
+    if (d && typeof d === 'object') {
+      state.novel = Object.assign(blankNovel(), d);
+      if (d.settings) writeSettings(d.settings);
+    }
+  }
+
+  /* ================= 画面切り替え・描画 ================= */
+  function showPanel(name) {
+    $$('.step').forEach(b => b.classList.toggle('is-active', b.dataset.panel === name));
+    $$('.panel').forEach(p => p.classList.toggle('is-active', p.id === 'panel-' + name));
+    if (name === 'voice') renderVoiceOptions();
+    window.scrollTo({ top: 0 });
+  }
+
+  function renderSteps() {
+    const n = state.novel;
+    const done = {
+      settings: !!n.plot,
+      plot: !!n.plot,
+      write: !!n.plot && n.plot.chapters.every((_, i) => n.chapters[i] && n.chapters[i].text),
+      voice: state.audio.chunks.length > 0,
+      earth: (n.locations || []).length > 0,
+      library: !!n.novelId
+    };
+    $$('.step').forEach(b => b.classList.toggle('is-done', !!done[b.dataset.panel]));
+  }
+
+  function renderAll() {
+    renderPlot();
+    renderWrite();
+    renderVoiceOptions();
+    renderLocations();
+    renderSteps();
+  }
+
+  function debounce(fn, ms) {
+    let t;
+    return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+  }
+
+  /* ================= テーマ・閲覧設定 ================= */
+  function toggleTheme() {
+    const root = document.documentElement;
+    const isDark = root.dataset.theme
+      ? root.dataset.theme === 'dark'
+      : window.matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = isDark ? 'light' : 'dark';
+    try { localStorage.setItem(LS.theme, root.dataset.theme); } catch (e) {}
+  }
+
+  function saveReader() { store.set(LS.reader, state.reader); }
+
+  /* ================= イベント登録・起動 ================= */
+  function bind() {
+    $$('.auth-tab').forEach(t => t.addEventListener('click', () => switchAuthTab(t.dataset.auth)));
+    $('#form-login').addEventListener('submit', handleLogin);
+    $('#form-register').addEventListener('submit', handleRegister);
+    $('#form-reset').addEventListener('submit', handleReset);
+    $('#form-pw').addEventListener('submit', handlePwChange);
+    $('#pw-modal').addEventListener('cancel', e => { if ($('#pw-modal').dataset.force) e.preventDefault(); });
+    $('#pw-cancel').addEventListener('click', () => $('#pw-modal').close());
+    $('#btn-logout').addEventListener('click', logout);
+    $('#btn-theme').addEventListener('click', toggleTheme);
+    $('#user-name').addEventListener('click', () => openPwModal(false));
+    $('#user-name').title = 'パスワードを変更する';
+    $('#user-name').style.cursor = 'pointer';
+
+    $$('.step').forEach(b => b.addEventListener('click', () => showPanel(b.dataset.panel)));
+    $('#btn-abort').addEventListener('click', () => { if (state.abort) state.abort.abort(); status('中断しています…'); });
+
+    $('#form-settings').addEventListener('submit', generatePlot);
+    $('#btn-new').addEventListener('click', newWork);
+    $('#btn-replot').addEventListener('click', () => { showPanel('settings'); generatePlot(); });
+    $('#btn-to-write').addEventListener('click', () => showPanel('write'));
+    bindPlotEditor();
+
+    $('#toc-list').addEventListener('click', e => {
+      const b = e.target.closest('.toc-item'); if (!b) return;
+      if (state.editing) endEdit(false);
+      state.current = num(b.dataset.i);
+      renderWrite();
+    });
+    $('#btn-write-one').addEventListener('click', writeOne);
+    $('#btn-write-all').addEventListener('click', writeAll);
+    $('#btn-vertical').addEventListener('click', () => { state.reader.vertical = !state.reader.vertical; saveReader(); renderReader(); });
+    $('#btn-font-up').addEventListener('click', () => { state.reader.size = Math.min(1.5, +(state.reader.size + 0.0625).toFixed(4)); saveReader(); renderReader(); });
+    $('#btn-font-down').addEventListener('click', () => { state.reader.size = Math.max(0.875, +(state.reader.size - 0.0625).toFixed(4)); saveReader(); renderReader(); });
+    $('#btn-edit').addEventListener('click', startEdit);
+    $('#btn-edit-save').addEventListener('click', () => endEdit(true));
+    $('#btn-edit-cancel').addEventListener('click', () => endEdit(false));
+
+    fillSelect($('#tts-voice'), C.TTS_VOICES);
+    fillSelect($('#tts-style'), C.NARRATION_STYLES);
+    $('#tts-voice').value = C.DEFAULTS.voice;
+    $('#tts-style').value = C.DEFAULTS.narration;
+    $('#btn-tts').addEventListener('click', generateTts);
+    bindPlayer();
+
+    $('#btn-extract').addEventListener('click', extractLocations);
+    $('#btn-kml').addEventListener('click', () => download(`${safeFile(state.novel.title)}_ロケ地.kml`, buildKml(), 'application/vnd.google-earth.kml+xml'));
+    $('#btn-earth-json').addEventListener('click', () => download(`${safeFile(state.novel.title)}_earth_studio.json`, JSON.stringify(buildEarthJson(), null, 2), 'application/json'));
+    bindLocationTable();
+
+    $('#btn-save-drive').addEventListener('click', () => saveToDrive(false));
+    $('#btn-dl-md').addEventListener('click', () => { if (state.novel.plot) download(`${safeFile(state.novel.title)}.md`, buildMarkdown(), 'text/markdown'); });
+    $('#btn-dl-txt').addEventListener('click', () => { if (state.novel.plot) download(`${safeFile(state.novel.title)}.txt`, buildPlainText(), 'text/plain'); });
+    $('#btn-dl-plot').addEventListener('click', () => { if (state.novel.plot) download(`${safeFile(state.novel.title)}_構成.json`, JSON.stringify(state.novel.plot, null, 2), 'application/json'); });
+    $('#btn-refresh-list').addEventListener('click', loadWorks);
+    $('#works-list').addEventListener('click', e => {
+      const l = e.target.closest('[data-load]'); if (l) return openWork(l.dataset.load);
+      const d = e.target.closest('[data-del]'); if (d) return deleteWork(d.dataset.del);
+    });
+
+    // 画面変化のたびに手順の完了表示を更新
+    new MutationObserver(debounce(renderSteps, 200)).observe($('#app'), { childList: true, subtree: true });
+    window.addEventListener('beforeunload', e => { if (state.busy) { e.preventDefault(); e.returnValue = ''; } });
+  }
+
+  async function boot() {
+    document.title = C.APP_NAME;
+    $('#app-name').textContent = C.APP_NAME;
+    $('#app-version').textContent = C.VERSION;
+    $('#app-updated').textContent = C.UPDATED;
+    $('#foot-version').textContent = `${C.APP_NAME} ${C.VERSION}（最終更新 ${C.UPDATED}）`;
+
+    const r = store.get(LS.reader);
+    if (r) state.reader = Object.assign(state.reader, r);
+
+    initPwToggles();
+    initSettingsForm();
+    bind();
+    restoreDraft();
+
+    const sess = store.get(LS.session);
+    if (sess && sess.token) {
+      state.token = sess.token; state.user = sess.user;
+      try {
+        const me = await api('me', {});
+        state.user = me.user;
+        store.set(LS.session, { token: state.token, user: state.user });
+        showApp();
+        if (me.user.status === 'FIRST_LOGIN') openPwModal(true);
+        return;
+      } catch (e) {
+        if (e.code !== 'AUTH') { showAuth(); authMsg(e.message, 'error'); return; }
       }
     }
-    if (line) { ctx.fillText(line, x, y); y += lineH; }
-    return y;
+    showAuth();
   }
 
-  async function drawShareCard() {
-    const c = $('#shareCanvas');
-    const ctx = c.getContext('2d');
-    const W = 1080, H = 1350;
-    const p = state.persona, s = state.stats;
-    try { await document.fonts.ready; } catch { /* noop */ }
-    const INK = '#1C2A4A', SUN = '#F3B23C', PAPER = '#E8F1F7', SOFT = '#4C5A79';
-
-    ctx.fillStyle = PAPER;
-    ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = INK;
-    ctx.fillRect(0, 0, W, 170);
-    ctx.fillStyle = SUN;
-    ctx.font = '62px "Dela Gothic One", sans-serif';
-    ctx.textBaseline = 'alphabetic';
-    ctx.textAlign = 'left';
-    ctx.fillText('今日は何をしよう', 70, 108);
-
-    ctx.fillStyle = INK;
-    ctx.font = '700 40px "Zen Maru Gothic", sans-serif';
-    ctx.fillText('あなたの冒険者タイプ', 70, 270);
-
-    ctx.fillStyle = SUN;
-    roundRect(ctx, W - 300, 212, 230, 84, 42);
-    ctx.fill();
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = INK;
-    ctx.stroke();
-    ctx.fillStyle = INK;
-    ctx.font = '50px "Dela Gothic One", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(`Lv.${p.level}`, W - 185, 272);
-    ctx.textAlign = 'left';
-
-    ctx.font = '72px "Dela Gothic One", sans-serif';
-    let y = wrapText(ctx, `『${p.typeName}』`, 70, 400, W - 140, 98, 3);
-    ctx.fillStyle = SOFT;
-    ctx.font = '500 36px "Zen Maru Gothic", sans-serif';
-    wrapText(ctx, p.description, 70, y + 26, W - 140, 54, 4);
-
-    const boxes = [
-      ['反逆率', s.rebelRate === null ? '—' : `${s.rebelRate}%`],
-      ['平均気分', s.avgEmotion === null ? '—' : `${s.avgEmotion}`],
-      ['くじ回数', `${s.totalDraws}回`]
-    ];
-    const bw = (W - 140 - 40) / 3, by = H - 470;
-    boxes.forEach(([label, val], i) => {
-      const bx = 70 + i * (bw + 20);
-      ctx.fillStyle = '#FFFFFF';
-      roundRect(ctx, bx, by, bw, 170, 24);
-      ctx.fill();
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = INK;
-      ctx.stroke();
-      ctx.fillStyle = INK;
-      ctx.textAlign = 'center';
-      ctx.font = '60px "Dela Gothic One", sans-serif';
-      ctx.fillText(val, bx + bw / 2, by + 95);
-      ctx.fillStyle = SOFT;
-      ctx.font = '700 30px "Zen Maru Gothic", sans-serif';
-      ctx.fillText(label, bx + bw / 2, by + 145);
-    });
-    ctx.textAlign = 'left';
-
-    ctx.fillStyle = INK;
-    ctx.font = '700 32px "Zen Maru Gothic", sans-serif';
-    ctx.fillText('AIが授ける次の開運アクション', 70, H - 225);
-    ctx.font = '700 44px "Zen Maru Gothic", sans-serif';
-    wrapText(ctx, p.luckyAction, 70, H - 165, W - 140, 58, 2);
-
-    ctx.fillStyle = SOFT;
-    ctx.font = '500 26px "Zen Maru Gothic", sans-serif';
-    ctx.fillText(CONFIG.SITE_URL || '', 70, H - 40);
-  }
-
-  function shareBlob() {
-    return new Promise((resolve) => $('#shareCanvas').toBlob(resolve, 'image/png'));
-  }
-
-  async function saveShareImage() {
-    const blob = await shareBlob();
-    if (!blob) return toast('画像を作れませんでした');
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'kyou-nani-shindan.png';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-  }
-
-  async function shareCard() {
-    const text = `私の冒険者タイプは『${state.persona.typeName}』（Lv.${state.persona.level}）でした！ #今日は何をしよう`;
-    try {
-      const blob = await shareBlob();
-      const file = blob ? new File([blob], 'kyou-nani-shindan.png', { type: 'image/png' }) : null;
-      if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file], text, title: '今日は何をしよう' });
-      } else if (navigator.share) {
-        await navigator.share({ text, url: CONFIG.SITE_URL, title: '今日は何をしよう' });
-      } else {
-        await navigator.clipboard.writeText(`${text} ${CONFIG.SITE_URL || ''}`);
-        toast('シェア用の文章をコピーしました。画像は「画像を保存」から保存できます');
-      }
-    } catch (err) {
-      if (err && err.name !== 'AbortError') toast('シェアできませんでした。「画像を保存」をお使いください');
-    }
-  }
-
-  /* ============================== イベント登録 ============================== */
-  function wire() {
-    $('#appVersion').textContent = CONFIG.APP_VERSION || '';
-    wirePasswordToggles();
-
-    $('#themeBtn').addEventListener('click', () => {
-      const cur = document.documentElement.dataset.theme || 'auto';
-      const next = THEMES[(THEMES.indexOf(cur) + 1) % THEMES.length];
-      LS.set(KEY.theme, next);
-      applyTheme(next);
-      renderItems();
-    });
-    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => requestAnimationFrame(relayoutStage));
-
-    $$('[data-auth]').forEach((b) => b.addEventListener('click', () => setAuthTab(b.dataset.auth)));
-    $('#loginForm').addEventListener('submit', onLogin);
-    $('#registerForm').addEventListener('submit', onRegister);
-    $('#resetForm').addEventListener('submit', onReset);
-    $('#changeForm').addEventListener('submit', onChangePassword);
-    $('#changeCancel').addEventListener('click', () => showView('main'));
-    $('#openChangeBtn').addEventListener('click', () => openChange(false));
-    $('#logoutBtn').addEventListener('click', onLogout);
-
-    $$('.tab-btn').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
-
-    // くじ
-    $$('input[name="mode"]').forEach((r) => r.addEventListener('change', () => setMode(r.value)));
-    $('#drawBtn').addEventListener('click', startDraw);
-    $('#addItemForm').addEventListener('submit', (e) => {
-      e.preventDefault();
-      const v = $('#newItem').value.trim();
-      if (!v) return;
-      if (state.items.length >= 40) return toast('選択肢は40個までです');
-      state.items.push(v);
-      $('#newItem').value = '';
-      saveItems();
-    });
-    $('#clearItemsBtn').addEventListener('click', () => {
-      if (!confirm('選択肢をすべて消して、2つの空の枠にします。よろしいですか？')) return;
-      state.items = ['やること1', 'やること2'];
-      saveItems();
-    });
-    $('#setSelect').addEventListener('change', (e) => {
-      const set = state.sets.find((s) => s.setId === e.target.value);
-      $('#deleteSetBtn').disabled = !set;
-      if (!set) return;
-      state.items = set.items.slice();
-      $('#setName').value = set.name;
-      saveItems();
-      toast(`「${set.name}」を読み込みました`);
-    });
-    $('#saveSetBtn').addEventListener('click', async () => {
-      const name = $('#setName').value.trim();
-      if (!name) { $('#setName').focus(); return toast('セットの名前を入れてください'); }
-      try {
-        const r = await api('saveSet', { name, items: state.items }, { busyText: '保存しています…' });
-        toast(r.message);
-        loadSets();
-      } catch (err) { toast(err.message); }
-    });
-    $('#deleteSetBtn').addEventListener('click', async () => {
-      const id = $('#setSelect').value;
-      const set = state.sets.find((s) => s.setId === id);
-      if (!set || !confirm(`セット「${set.name}」を削除しますか？`)) return;
-      try {
-        await api('deleteSet', { setId: id }, { busyText: '削除しています…' });
-        toast('セットを削除しました');
-        loadSets();
-      } catch (err) { toast(err.message); }
-    });
-
-    // AI
-    $$('#themeChips .chip').forEach((c) => c.addEventListener('click', () => {
-      const on = c.getAttribute('aria-pressed') !== 'true';
-      $$('#themeChips .chip').forEach((x) => x.setAttribute('aria-pressed', 'false'));
-      c.setAttribute('aria-pressed', String(on));
-    }));
-    $('#aiBtn').addEventListener('click', async () => {
-      const chip = $('#themeChips .chip[aria-pressed="true"]');
-      const note = $('#aiNote').value.trim();
-      const theme = chip ? chip.textContent : (note ? '希望にそって' : 'おまかせ');
-      try {
-        const r = await api('aiChoices', { theme, note, count: Number($('#aiCount').value) }, { busyText: 'AIが選択肢を考えています…' });
-        state.items = r.items;
-        saveItems();
-        $('#itemsPanel').open = true;
-        toast(`AIが${r.items.length}個の選択肢を作りました`);
-      } catch (err) { toast(err.message); }
-    });
-
-    // 結果ダイアログ
-    const dlg = $('#resultDialog');
-    $('#resultClose').addEventListener('click', () => dlg.close());
-    dlg.addEventListener('close', () => { clearMedia(); });
-    dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
-    $('#toDiaryBtn').addEventListener('click', goDiaryFromResult);
-    $('#againBtn').addEventListener('click', () => { dlg.close(); mountStage(); });
-
-    // 日記
-    $('#unlinkBtn').addEventListener('click', () => linkDraw(null));
-    $('#micBtn').addEventListener('click', toggleMic);
-    $('#structBtn').addEventListener('click', structureDiary);
-    $('#dPhotos').addEventListener('change', onPhotosChosen);
-    $('#diaryForm').addEventListener('submit', onSaveDiary);
-    $('#resetDiaryBtn').addEventListener('click', () => {
-      if (($('#dRaw').value || $('#dTitle').value) && !confirm('入力中の内容を消して、新しく書き直しますか？')) return;
-      stopListening();
-      resetDiaryForm();
-    });
-    $('#moreDiaryBtn').addEventListener('click', () => loadDiaries(false));
-
-    // 分析
-    $('#analyzeBtn').addEventListener('click', analyze);
-    $('#pSpeak').addEventListener('click', (e) => speak(personaSpeech(), e.currentTarget));
-    $('#shareSaveBtn').addEventListener('click', saveShareImage);
-    $('#shareBtn').addEventListener('click', shareCard);
-
-    let resizeTimer = null;
-    window.addEventListener('resize', () => {
-      clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(relayoutStage, 200);
-    });
-  }
-
-  /* ============================== 起動 ============================== */
-  async function init() {
-    applyTheme(LS.get(KEY.theme, 'auto'));
-    wire();
-    if (!state.token) { setAuthTab('login'); showView('auth'); return; }
-    try {
-      const r = await api('me', {}, { busyText: 'ログインを確認しています…' });
-      state.user = r.user;
-      if (r.user.mustChange) openChange(true);
-      else enterMain();
-    } catch (err) {
-      if (err.code !== 'SESSION_EXPIRED') toast(err.message);
-      setAuthTab('login');
-      showView('auth');
-    }
-  }
-
-  init();
+  document.addEventListener('DOMContentLoaded', boot);
 })();

@@ -1,325 +1,301 @@
-<!doctype html>
-<html lang="ja" data-theme="auto">
+<!DOCTYPE html>
+<html lang="ja">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>今日は何をしよう</title>
-  <meta name="description" content="ルーレット・あみだくじ・トランプ・おみくじで今日やることを決めて、話すだけで日記に残せるアプリ。">
-  <meta name="theme-color" content="#E8F1F7" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#111A2C" media="(prefers-color-scheme: dark)">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎲</text></svg>">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>小説工房</title>
+  <meta name="description" content="作風・時代・トーンを選んで、章ごとに長編小説を書き上げるWebアプリ">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=Zen+Maru+Gothic:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@400;600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
+  <script>
+    // テーマのちらつき防止
+    try { const t = localStorage.getItem('skb_theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
 </head>
 <body>
+  <header class="masthead">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">筆</span>
+      <div>
+        <h1 class="brand-name" id="app-name">小説工房</h1>
+        <p class="brand-ver"><span id="app-version"></span>（<span id="app-updated"></span> 更新）</p>
+      </div>
+    </div>
+    <div class="masthead-tools">
+      <span class="user-name" id="user-name" hidden></span>
+      <button type="button" class="btn ghost small" id="btn-theme" aria-label="表示テーマを切り替える">明暗</button>
+      <button type="button" class="btn ghost small" id="btn-logout" hidden>ログアウト</button>
+    </div>
+  </header>
 
-<header class="app-header">
-  <h1 class="logo">今日は何をしよう</h1>
-  <div class="header-actions">
-    <span id="userName" class="user-name" hidden></span>
-    <button type="button" id="themeBtn" class="icon-btn" aria-label="表示テーマ：自動">◐</button>
-    <button type="button" id="logoutBtn" class="text-btn" hidden>ログアウト</button>
-  </div>
-</header>
-
-<main class="app-main">
-
-  <!-- ==================== ログイン・登録 ==================== -->
-  <section id="authView" class="view" hidden>
+  <!-- ===== 認証画面 ===== -->
+  <section class="auth" id="auth-screen" hidden>
     <div class="auth-card">
-      <p class="auth-lead">くじで今日の予定を決めて、<br>話すだけで日記に残せます。</p>
+      <h2 class="auth-title">原稿用紙を、ひらく。</h2>
+      <p class="auth-lead">作風と時代を選ぶと、章立てから本文、朗読、ロケ地まで一続きで仕上げます。</p>
 
-      <div class="seg" role="tablist" aria-label="ログイン方法">
-        <button type="button" role="tab" class="seg-btn" data-auth="login" aria-selected="true">ログイン</button>
-        <button type="button" role="tab" class="seg-btn" data-auth="register" aria-selected="false">新規登録</button>
-        <button type="button" role="tab" class="seg-btn" data-auth="reset" aria-selected="false">パスワードを忘れた</button>
+      <div class="auth-tabs" role="tablist">
+        <button type="button" role="tab" class="auth-tab is-active" data-auth="login" aria-selected="true">ログイン</button>
+        <button type="button" role="tab" class="auth-tab" data-auth="register" aria-selected="false">新規登録</button>
+        <button type="button" role="tab" class="auth-tab" data-auth="reset" aria-selected="false">パスワード再発行</button>
       </div>
 
-      <form id="loginForm" class="stack" data-auth-form="login">
-        <label class="field">メールアドレス
-          <input type="email" id="loginEmail" autocomplete="email" required>
-        </label>
-        <label class="field">パスワード
-          <span class="pw-field">
-            <input type="password" id="loginPassword" autocomplete="current-password" required>
-            <button type="button" class="pw-toggle" aria-label="パスワードを表示" aria-pressed="false"></button>
-          </span>
-        </label>
-        <button type="submit" class="big-btn">ログイン</button>
+      <form class="auth-form" id="form-login" data-auth-panel="login">
+        <label class="field"><span>メールアドレス</span>
+          <input type="email" name="email" autocomplete="email" required></label>
+        <label class="field"><span>パスワード</span>
+          <span class="pw-wrap">
+            <input type="password" name="password" id="login-pw" autocomplete="current-password" required>
+            <button type="button" class="pw-toggle" data-target="login-pw" aria-label="パスワードを表示" aria-pressed="false"></button>
+          </span></label>
+        <button type="submit" class="btn primary wide">ログイン</button>
       </form>
 
-      <form id="registerForm" class="stack" data-auth-form="register" hidden>
-        <label class="field">ニックネーム
-          <input type="text" id="regNickname" maxlength="20" autocomplete="nickname" required>
-        </label>
-        <label class="field">メールアドレス
-          <input type="email" id="regEmail" autocomplete="email" required>
-        </label>
-        <p class="note">登録したメールアドレスに仮パスワードが届きます。最初のログインで本パスワードに変更してください。</p>
-        <button type="submit" class="big-btn">仮パスワードを受け取る</button>
+      <form class="auth-form" id="form-register" data-auth-panel="register" hidden>
+        <label class="field"><span>ユーザー名</span>
+          <input type="text" name="username" maxlength="30" autocomplete="nickname" required></label>
+        <label class="field"><span>メールアドレス</span>
+          <input type="email" name="email" autocomplete="email" required></label>
+        <p class="hint">登録すると仮パスワードがメールで届きます。初回ログイン時に本パスワードへ変更します。</p>
+        <button type="submit" class="btn primary wide">仮パスワードを受け取る</button>
       </form>
 
-      <form id="resetForm" class="stack" data-auth-form="reset" hidden>
-        <label class="field">登録したメールアドレス
-          <input type="email" id="resetEmail" autocomplete="email" required>
-        </label>
-        <p class="note">新しい仮パスワードをメールで送ります。</p>
-        <button type="submit" class="big-btn">仮パスワードを再発行</button>
+      <form class="auth-form" id="form-reset" data-auth-panel="reset" hidden>
+        <label class="field"><span>登録したメールアドレス</span>
+          <input type="email" name="email" autocomplete="email" required></label>
+        <p class="hint">新しい仮パスワードをメールで送ります。届いた仮パスワードでログインしてください。</p>
+        <button type="submit" class="btn primary wide">仮パスワードを再発行</button>
       </form>
 
-      <p id="authMsg" class="form-msg" role="status" aria-live="polite"></p>
+      <p class="auth-msg" id="auth-msg" role="status" aria-live="polite"></p>
     </div>
   </section>
 
-  <!-- ==================== パスワード変更 ==================== -->
-  <section id="changeView" class="view" hidden>
-    <form id="changeForm" class="auth-card stack">
-      <h2 class="view-title">本パスワードを決めましょう</h2>
-      <p id="changeLead" class="note">仮パスワードのままでは使えません。英字と数字をまぜた8文字以上にしてください。</p>
-      <label class="field">現在のパスワード（仮パスワード）
-        <span class="pw-field">
-          <input type="password" id="curPassword" autocomplete="current-password" required>
-          <button type="button" class="pw-toggle" aria-label="パスワードを表示" aria-pressed="false"></button>
-        </span>
-      </label>
-      <label class="field">新しいパスワード
-        <span class="pw-field">
-          <input type="password" id="newPassword" autocomplete="new-password" minlength="8" required>
-          <button type="button" class="pw-toggle" aria-label="パスワードを表示" aria-pressed="false"></button>
-        </span>
-      </label>
-      <label class="field">新しいパスワード（確認）
-        <span class="pw-field">
-          <input type="password" id="newPassword2" autocomplete="new-password" minlength="8" required>
-          <button type="button" class="pw-toggle" aria-label="パスワードを表示" aria-pressed="false"></button>
-        </span>
-      </label>
-      <button type="submit" class="big-btn">パスワードを変更</button>
-      <button type="button" id="changeCancel" class="text-btn" hidden>やめて戻る</button>
-      <p id="changeMsg" class="form-msg" role="status" aria-live="polite"></p>
+  <!-- ===== パスワード強制変更 ===== -->
+  <dialog class="modal" id="pw-modal" aria-labelledby="pw-modal-title">
+    <form method="dialog" id="form-pw">
+      <h2 id="pw-modal-title">本パスワードを設定</h2>
+      <p class="hint" id="pw-modal-lead">仮パスワードでログインしました。続けるには本パスワードを設定してください。</p>
+      <label class="field"><span>現在のパスワード（仮パスワード）</span>
+        <span class="pw-wrap">
+          <input type="password" name="current" id="pw-current" autocomplete="current-password" required>
+          <button type="button" class="pw-toggle" data-target="pw-current" aria-label="パスワードを表示" aria-pressed="false"></button>
+        </span></label>
+      <label class="field"><span>新しいパスワード（8文字以上・英字と数字を含む）</span>
+        <span class="pw-wrap">
+          <input type="password" name="next" id="pw-next" autocomplete="new-password" minlength="8" required>
+          <button type="button" class="pw-toggle" data-target="pw-next" aria-label="パスワードを表示" aria-pressed="false"></button>
+        </span></label>
+      <label class="field"><span>新しいパスワード（確認）</span>
+        <span class="pw-wrap">
+          <input type="password" name="confirm" id="pw-confirm" autocomplete="new-password" minlength="8" required>
+          <button type="button" class="pw-toggle" data-target="pw-confirm" aria-label="パスワードを表示" aria-pressed="false"></button>
+        </span></label>
+      <p class="auth-msg" id="pw-msg" role="status" aria-live="polite"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" id="pw-cancel" hidden>閉じる</button>
+        <button type="submit" class="btn primary">パスワードを変更</button>
+      </div>
     </form>
-  </section>
+  </dialog>
 
-  <!-- ==================== メイン ==================== -->
-  <section id="mainView" class="view" hidden>
-    <nav class="main-tabs" role="tablist" aria-label="画面切り替え">
-      <button type="button" role="tab" class="tab-btn" data-tab="draw" aria-selected="true"><span aria-hidden="true">🎲</span>くじ</button>
-      <button type="button" role="tab" class="tab-btn" data-tab="diary" aria-selected="false"><span aria-hidden="true">📔</span>日記</button>
-      <button type="button" role="tab" class="tab-btn" data-tab="stats" aria-selected="false"><span aria-hidden="true">🔮</span>分析</button>
+  <!-- ===== アプリ本体 ===== -->
+  <main class="app" id="app" hidden>
+    <nav class="steps" aria-label="執筆の手順">
+      <ol>
+        <li><button type="button" class="step is-active" data-panel="settings"><span class="step-no">一</span>設定</button></li>
+        <li><button type="button" class="step" data-panel="plot"><span class="step-no">二</span>構成</button></li>
+        <li><button type="button" class="step" data-panel="write"><span class="step-no">三</span>本文</button></li>
+        <li><button type="button" class="step" data-panel="voice"><span class="step-no">四</span>朗読</button></li>
+        <li><button type="button" class="step" data-panel="earth"><span class="step-no">五</span>ロケ地</button></li>
+        <li><button type="button" class="step" data-panel="library"><span class="step-no">六</span>保存</button></li>
+      </ol>
     </nav>
 
-    <!-- ---------- くじ ---------- -->
-    <div id="tab-draw" class="tab-panel" role="tabpanel">
-      <div class="mode-picker" role="radiogroup" aria-label="くじの種類">
-        <label class="mode"><input type="radio" name="mode" value="roulette"><span><b aria-hidden="true">🎡</b>ルーレット</span></label>
-        <label class="mode"><input type="radio" name="mode" value="amida"><span><b aria-hidden="true">🪜</b>あみだくじ</span></label>
-        <label class="mode"><input type="radio" name="mode" value="trump"><span><b aria-hidden="true">🃏</b>トランプ</span></label>
-        <label class="mode"><input type="radio" name="mode" value="omikuji"><span><b aria-hidden="true">⛩️</b>おみくじ</span></label>
-      </div>
-
-      <div id="stage" class="stage" aria-live="polite"></div>
-
-      <div class="stage-actions">
-        <button type="button" id="drawBtn" class="big-btn draw-btn">くじを引く</button>
-        <p id="stageHint" class="hint"></p>
-      </div>
-
-      <details class="panel" id="itemsPanel" open>
-        <summary>選択肢（<span id="itemCount">0</span>個）</summary>
-        <ul id="itemList" class="item-list"></ul>
-        <form id="addItemForm" class="row">
-          <input type="text" id="newItem" maxlength="60" placeholder="やりたいことを追加" aria-label="追加する選択肢">
-          <button type="submit" class="btn">追加</button>
-        </form>
-        <div class="row">
-          <select id="setSelect" aria-label="保存したセット">
-            <option value="">保存したセットを読み込む</option>
-          </select>
-          <button type="button" id="deleteSetBtn" class="text-btn" disabled>このセットを削除</button>
-        </div>
-        <div class="row">
-          <input type="text" id="setName" maxlength="30" placeholder="セットの名前（例：雨の日用）" aria-label="セットの名前">
-          <button type="button" id="saveSetBtn" class="btn">セットを保存</button>
-        </div>
-        <button type="button" id="clearItemsBtn" class="text-btn">選択肢をすべて消す</button>
-      </details>
-
-      <details class="panel">
-        <summary>AIに選択肢を作ってもらう</summary>
-        <div class="chips" id="themeChips" role="radiogroup" aria-label="テーマ">
-          <button type="button" class="chip" aria-pressed="false">インドア向け</button>
-          <button type="button" class="chip" aria-pressed="false">予算1000円以内</button>
-          <button type="button" class="chip" aria-pressed="false">リフレッシュ</button>
-          <button type="button" class="chip" aria-pressed="false">冒険・おでかけ</button>
-          <button type="button" class="chip" aria-pressed="false">雨の日</button>
-          <button type="button" class="chip" aria-pressed="false">体を動かす</button>
-          <button type="button" class="chip" aria-pressed="false">誰かと一緒に</button>
-        </div>
-        <label class="field">ほかの希望（任意）
-          <input type="text" id="aiNote" maxlength="200" placeholder="例：30分以内でできること、近所で">
-        </label>
-        <div class="row">
-          <label class="inline">個数
-            <select id="aiCount">
-              <option>4</option><option selected>6</option><option>8</option><option>10</option><option>12</option>
-            </select>
-          </label>
-          <button type="button" id="aiBtn" class="btn btn-strong">AIに作ってもらう</button>
-        </div>
-        <p class="note">今の選択肢はAIの提案に置き換わります。</p>
-      </details>
+    <!-- 進行状況バー -->
+    <div class="statusbar" id="statusbar" hidden>
+      <span class="spinner" aria-hidden="true"></span>
+      <span class="status-text" id="status-text" role="status" aria-live="polite"></span>
+      <button type="button" class="btn ghost small" id="btn-abort">中断</button>
     </div>
 
-    <!-- ---------- 日記 ---------- -->
-    <div id="tab-diary" class="tab-panel" role="tabpanel" hidden>
-      <form id="diaryForm" class="panel diary-editor stack">
-        <div class="editor-head">
-          <h2 id="diaryFormTitle" class="view-title">今日の日記</h2>
-          <input type="date" id="dDate" aria-label="日付">
+    <!-- 一：設定 -->
+    <section class="panel is-active" id="panel-settings">
+      <header class="panel-head">
+        <h2>どんな小説を書くか</h2>
+        <p>題名は空欄でも構いません。構成を作るときに付けます。</p>
+      </header>
+      <form id="form-settings" class="settings">
+        <div class="grid-2">
+          <label class="field"><span>題名（任意）</span><input type="text" name="title" maxlength="60"></label>
+          <label class="field"><span>舞台となる土地（任意）</span><input type="text" name="place" maxlength="80" placeholder="例：横浜・本牧、尾道の坂の町"></label>
         </div>
+        <label class="field"><span>物語の核・あらすじ案</span>
+          <textarea name="premise" rows="4" maxlength="2000" required placeholder="例：港町の古い質屋に、三十年前に質入れされた拳銃を受け出しに来た老人。店主の娘はその拳銃が父の死に関わっていると知る。"></textarea></label>
+        <label class="field"><span>主人公（任意）</span>
+          <input type="text" name="protagonist" maxlength="200" placeholder="例：元刑事の探偵、52歳。左膝に古傷"></label>
 
-        <div id="linkedDraw" class="linked" hidden>
-          <p>🎲 くじの結果：<strong id="linkedResult"></strong>
-            <button type="button" id="unlinkBtn" class="text-btn">連携を外す</button></p>
-          <fieldset class="outcome">
-            <legend>くじの結果どおりにやった？</legend>
-            <label><input type="radio" name="outcome" value="followed" checked> やった</label>
-            <label><input type="radio" name="outcome" value="rebel"> 逆らって別のことをした</label>
-            <label><input type="radio" name="outcome" value="skipped"> やらなかった</label>
-          </fieldset>
-        </div>
-
-        <label class="field">今日のこと（話すだけでOK）
-          <textarea id="dRaw" rows="4" placeholder="マイクを押して、今日やったことや感じたことを話してください"></textarea>
-        </label>
-        <p id="interim" class="interim" aria-live="polite"></p>
-        <div class="row">
-          <button type="button" id="micBtn" class="btn mic-btn" aria-pressed="false">🎤 話して入力</button>
-          <button type="button" id="structBtn" class="btn btn-strong">AIで日記に清書</button>
-        </div>
-
-        <label class="field">タイトル
-          <input type="text" id="dTitle" maxlength="60">
-        </label>
-        <label class="field">実際にやったこと
-          <textarea id="dDid" rows="3"></textarea>
-        </label>
-        <label class="field">感想
-          <textarea id="dFeeling" rows="3"></textarea>
-        </label>
-        <fieldset class="score">
-          <legend>気分スコア</legend>
-          <label><input type="radio" name="dScore" value="1"><span aria-label="1 しんどい">😫</span></label>
-          <label><input type="radio" name="dScore" value="2"><span aria-label="2 いまいち">🙁</span></label>
-          <label><input type="radio" name="dScore" value="3"><span aria-label="3 ふつう">😐</span></label>
-          <label><input type="radio" name="dScore" value="4"><span aria-label="4 よかった">🙂</span></label>
-          <label><input type="radio" name="dScore" value="5"><span aria-label="5 最高">😆</span></label>
+        <fieldset class="preset">
+          <legend>文体・作風</legend>
+          <div class="choice-list" id="choices-style"></div>
         </fieldset>
-        <label class="field">次回やりたいこと
-          <input type="text" id="dNext" maxlength="200">
-        </label>
-
-        <div id="aiCommentBox" class="ai-comment" hidden>
-          <p class="ai-comment-label">AIのひとこと</p>
-          <p id="dAiComment"></p>
+        <div class="grid-3">
+          <label class="field"><span>時代背景</span><select name="era" id="sel-era"></select></label>
+          <label class="field"><span>トーン</span><select name="tone" id="sel-tone"></select></label>
+          <label class="field"><span>描写の切り口</span><select name="focus" id="sel-focus"></select></label>
         </div>
-
-        <div class="photos">
-          <label class="btn file-btn">📷 写真を追加
-            <input type="file" id="dPhotos" accept="image/*" multiple hidden>
-          </label>
-          <div id="photoPreview" class="photo-grid"></div>
+        <p class="preset-note" id="era-note"></p>
+        <div class="grid-2">
+          <label class="field"><span>章数</span><select name="chapters" id="sel-chapters"></select></label>
+          <label class="field"><span>1章の分量</span><select name="charsPerChapter" id="sel-length"></select></label>
         </div>
-
-        <div class="row">
-          <button type="submit" class="big-btn">日記を保存</button>
-          <button type="button" id="resetDiaryBtn" class="text-btn">新しく書き直す</button>
+        <label class="field"><span>その他の希望（任意）</span>
+          <textarea name="notes" rows="2" maxlength="1000" placeholder="例：結末は救いのある形に。暴力描写は控えめに。"></textarea></label>
+        <div class="actions">
+          <button type="submit" class="btn primary" id="btn-plot">構成を作る</button>
+          <button type="button" class="btn ghost" id="btn-new">新しい作品にする</button>
         </div>
       </form>
+    </section>
 
-      <h2 class="section-title">これまでの日記</h2>
-      <div id="diaryList" class="diary-list"></div>
-      <button type="button" id="moreDiaryBtn" class="btn more-btn" hidden>もっと見る</button>
-    </div>
+    <!-- 二：構成 -->
+    <section class="panel" id="panel-plot">
+      <header class="panel-head">
+        <h2>構成（プロットと章立て）</h2>
+        <p>書き直したい箇所はそのまま編集できます。編集内容は本文の生成に反映されます。</p>
+      </header>
+      <div id="plot-empty" class="empty">まだ構成がありません。「設定」で条件を入れて「構成を作る」を押してください。</div>
+      <div id="plot-editor" hidden>
+        <label class="field"><span>題名</span><input type="text" id="plot-title" maxlength="60"></label>
+        <label class="field"><span>一文の要約</span><textarea id="plot-logline" rows="2"></textarea></label>
+        <label class="field"><span>舞台と時代</span><textarea id="plot-setting" rows="3"></textarea></label>
+        <label class="field"><span>登場人物（1行に1人：名前｜役割｜説明）</span><textarea id="plot-characters" rows="5"></textarea></label>
+        <ol class="chapter-plan" id="plot-chapters"></ol>
+        <div class="actions">
+          <button type="button" class="btn primary" id="btn-to-write">本文を書く</button>
+          <button type="button" class="btn ghost" id="btn-replot">構成を作り直す</button>
+        </div>
+      </div>
+    </section>
 
-    <!-- ---------- 分析 ---------- -->
-    <div id="tab-stats" class="tab-panel" role="tabpanel" hidden>
-      <div class="panel stats-intro">
-        <p>くじの結果と日記から、あなたの過ごし方をAIが占います。</p>
-        <button type="button" id="analyzeBtn" class="big-btn">分析する</button>
-        <p id="statsEmpty" class="note" hidden></p>
+    <!-- 三：本文 -->
+    <section class="panel" id="panel-write">
+      <header class="panel-head">
+        <h2 id="write-title">本文</h2>
+        <p id="write-meta">前の章の要約と直前の場面を引き継ぎながら、1章ずつ書きます。</p>
+      </header>
+      <div class="write-layout">
+        <aside class="toc">
+          <ol id="toc-list"></ol>
+          <div class="toc-actions">
+            <button type="button" class="btn primary wide" id="btn-write-all">残りの章を順に書く</button>
+            <button type="button" class="btn ghost wide" id="btn-write-one">この章を書く／書き直す</button>
+          </div>
+        </aside>
+        <div class="reader-wrap">
+          <div class="reader-tools">
+            <button type="button" class="btn ghost small" id="btn-vertical" aria-pressed="false">縦書き</button>
+            <button type="button" class="btn ghost small" id="btn-font-down" aria-label="文字を小さく">小</button>
+            <button type="button" class="btn ghost small" id="btn-font-up" aria-label="文字を大きく">大</button>
+            <button type="button" class="btn ghost small" id="btn-edit">この章を編集</button>
+            <span class="char-count" id="char-count"></span>
+          </div>
+          <article class="manuscript" id="reader" tabindex="0"></article>
+          <div class="editor" id="editor" hidden>
+            <textarea id="editor-text" rows="20"></textarea>
+            <div class="actions">
+              <button type="button" class="btn primary" id="btn-edit-save">編集を反映</button>
+              <button type="button" class="btn ghost" id="btn-edit-cancel">やめる</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 四：朗読 -->
+    <section class="panel" id="panel-voice">
+      <header class="panel-head">
+        <h2>朗読</h2>
+        <p>本文を短く区切って音声にします。1章で数分〜十数分かかります。</p>
+      </header>
+      <div class="grid-3">
+        <label class="field"><span>読む範囲</span><select id="tts-scope"></select></label>
+        <label class="field"><span>声</span><select id="tts-voice"></select></label>
+        <label class="field"><span>読み方</span><select id="tts-style"></select></label>
+      </div>
+      <label class="check"><input type="checkbox" id="tts-drive"> 作った音声をGoogleドライブにも保存する</label>
+      <div class="actions">
+        <button type="button" class="btn primary" id="btn-tts">音声を作る</button>
       </div>
 
-      <div id="statsResult" hidden>
-        <article class="persona">
-          <p class="persona-label">あなたの冒険者タイプ</p>
-          <p id="pLevel" class="persona-level"></p>
-          <h2 id="pType" class="persona-type"></h2>
-          <p id="pDesc"></p>
-          <p id="pTags" class="persona-tags"></p>
-          <div class="lucky">
-            <h3>AIが授ける次の開運アクション</h3>
-            <p id="pLucky"></p>
-          </div>
-          <p id="pComment" class="persona-comment"></p>
-          <button type="button" id="pSpeak" class="btn">🔊 読み上げる</button>
-        </article>
-
-        <div id="statGrid" class="stat-grid"></div>
-
-        <section class="panel">
-          <h3>よく使うくじ</h3>
-          <div id="modeBars" class="bars"></div>
-        </section>
-        <section class="panel">
-          <h3>よく出た結果</h3>
-          <ol id="topResults" class="top-results"></ol>
-        </section>
-        <section class="panel">
-          <h3>曜日ごとのくじ回数</h3>
-          <div id="weekBars" class="bars"></div>
-        </section>
-        <section class="panel share">
-          <h3>シェア用カード</h3>
-          <canvas id="shareCanvas" width="1080" height="1350" aria-label="シェア用の診断カード"></canvas>
-          <div class="row">
-            <button type="button" id="shareSaveBtn" class="btn">画像を保存</button>
-            <button type="button" id="shareBtn" class="btn btn-strong">シェアする</button>
-          </div>
-        </section>
+      <div class="player" id="player" hidden>
+        <audio id="audio" preload="auto"></audio>
+        <div class="player-main">
+          <button type="button" class="btn ghost small" id="pl-prev" aria-label="前の区切りへ">前</button>
+          <button type="button" class="btn primary player-play" id="pl-play">再生</button>
+          <button type="button" class="btn ghost small" id="pl-next" aria-label="次の区切りへ">次</button>
+          <input type="range" id="pl-seek" min="0" max="1000" value="0" aria-label="再生位置">
+          <span class="pl-time" id="pl-time">0:00 / 0:00</span>
+        </div>
+        <p class="pl-now" id="pl-now"></p>
+        <div class="actions">
+          <button type="button" class="btn ghost small" id="pl-dl-one">この区切りを保存</button>
+          <button type="button" class="btn ghost small" id="pl-dl-all">全部つなげて保存（WAV）</button>
+        </div>
+        <ol class="pl-list" id="pl-list"></ol>
       </div>
-    </div>
-  </section>
-</main>
+    </section>
 
-<footer class="app-footer">
-  <span>今日は何をしよう</span>
-  <span id="appVersion" class="version"></span>
-  <button type="button" id="openChangeBtn" class="text-btn" hidden>パスワード変更</button>
-</footer>
+    <!-- 五：ロケ地 -->
+    <section class="panel" id="panel-earth">
+      <header class="panel-head">
+        <h2>ロケ地と空撮カメラ</h2>
+        <p>本文から舞台になった場所を拾い、緯度・経度・高度・カメラ角度をまとめます。Google Earth Studio のキーフレーム入力や、Google Earth での下見に使えます。</p>
+      </header>
+      <div class="actions">
+        <button type="button" class="btn primary" id="btn-extract">本文からロケ地を拾う</button>
+        <button type="button" class="btn ghost" id="btn-kml" disabled>KMLを保存</button>
+        <button type="button" class="btn ghost" id="btn-earth-json" disabled>カメラJSONを保存</button>
+      </div>
+      <div class="table-wrap">
+        <table class="loc-table" id="loc-table" hidden>
+          <thead>
+            <tr><th>章</th><th>場所</th><th>緯度</th><th>経度</th><th>距離(m)</th><th>傾き</th><th>方位</th><th>秒</th><th></th></tr>
+          </thead>
+          <tbody id="loc-body"></tbody>
+        </table>
+      </div>
+      <p class="hint">数値は直接書き換えられます。傾きは0が真下、90が水平。方位は0が北です。架空の場所は、物語に近い実在の場所に置き換えています。</p>
+    </section>
 
-<!-- 結果ダイアログ -->
-<dialog id="resultDialog" class="result-dialog" aria-labelledby="resultText">
-  <button type="button" id="resultClose" class="icon-btn result-close" aria-label="閉じる">×</button>
-  <div id="resultMedia" class="result-media" hidden></div>
-  <div class="result-body">
-    <p id="resultLead" class="result-lead">今日やることは</p>
-    <p id="resultFortune" class="result-fortune" hidden></p>
-    <h2 id="resultText" class="result-text"></h2>
-    <a id="earthLink" class="text-btn earth-link" target="_blank" rel="noopener" hidden>🌏 Google Earthで場所を見る</a>
-    <div class="row result-actions">
-      <button type="button" id="toDiaryBtn" class="big-btn">日記に書く</button>
-      <button type="button" id="againBtn" class="btn">もう一回</button>
-    </div>
-  </div>
-</dialog>
+    <!-- 六：保存 -->
+    <section class="panel" id="panel-library">
+      <header class="panel-head">
+        <h2>保存と作品一覧</h2>
+        <p>Googleドライブには、本文（txt / md）、構成（json）、ロケ地データ（json / kml）をまとめて保存します。</p>
+      </header>
+      <div class="actions">
+        <button type="button" class="btn primary" id="btn-save-drive">Googleドライブに保存</button>
+        <button type="button" class="btn ghost" id="btn-dl-md">Markdownを保存</button>
+        <button type="button" class="btn ghost" id="btn-dl-txt">テキストを保存</button>
+        <button type="button" class="btn ghost" id="btn-dl-plot">構成JSONを保存</button>
+      </div>
+      <p class="drive-link" id="drive-link"></p>
+      <h3 class="sub-head">保存した作品</h3>
+      <div class="actions"><button type="button" class="btn ghost small" id="btn-refresh-list">一覧を更新</button></div>
+      <ul class="works" id="works-list"></ul>
+    </section>
+  </main>
 
-<div id="toast" class="toast" role="status" aria-live="polite"></div>
-<div id="busy" class="busy" hidden><span class="spinner" aria-hidden="true"></span><span id="busyText">通信中…</span></div>
+  <footer class="site-foot">
+    <span id="foot-version"></span>
+  </footer>
 
-<script src="config.js"></script>
-<script src="app.js"></script>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
