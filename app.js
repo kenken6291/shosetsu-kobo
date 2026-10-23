@@ -1,5 +1,5 @@
 /**
- * 小説工房 app.js v1.0.3
+ * 小説工房 app.js v1.0.4
  * 会員認証 / 設定UI / プロンプト組み立て / 章ごとの連鎖生成 / 朗読 / ロケ地 / ドライブ保存
  */
 (() => {
@@ -788,6 +788,11 @@ ${fullText}`;
     let buf = '';
     const push = () => { if (buf.trim()) out.push(buf.trim()); buf = ''; };
     text.split('\n').map(s => s.trim()).filter(Boolean).forEach(para => {
+      // 場面転換の「＊」行は読まずに区切りとして扱う
+      if (/^[\s＊*※☆★◇◆・ー―─－\-〜~]+$/.test(para)) { push(); return; }
+      // 行中のアスタリスク類も読み上げない
+      para = para.replace(/[＊*※]+/g, '').trim();
+      if (!para) return;
       const sentences = para.split(/(?<=[。！？!?」])/);
       sentences.forEach(sen => {
         while (sen.length > max) { push(); out.push(sen.slice(0, max)); sen = sen.slice(max); }
