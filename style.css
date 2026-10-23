@@ -1,4 +1,4 @@
-/* 小説工房 style.css v1.0.2 */
+/* 小説工房 style.css v1.0.3 */
 :root {
   --bg: #E6E9E3;
   --paper: #F6F7F2;
@@ -228,6 +228,14 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); outline
 .toc-item.is-current { border-left-color: var(--accent); color: var(--ink); background: var(--accent-soft); }
 .toc-item.is-written small { color: var(--ok); }
 .toc-actions { display: grid; gap: 8px; }
+.toc-full { font-weight: 700; }
+.export-box { display: grid; gap: 6px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rule); }
+.export-title { margin: 0 0 2px; font-size: 13px; color: var(--muted); }
+.ms-title { font-size: 1.6em; letter-spacing: .1em; margin: 0 0 1.6em; }
+.manuscript.is-vertical .ms-title { margin: 0 0 0 1.6em; }
+.manuscript h3 + p { margin-top: 0; }
+.manuscript p + h3 { margin-top: 2.6em; }
+.manuscript.is-vertical p + h3 { margin: 0 2.6em 0 1.4em; }
 
 .reader-wrap { min-width: 0; }
 .reader-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 10px; }
@@ -258,6 +266,18 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); outline
 #pl-seek { flex: 1; min-width: 140px; accent-color: var(--accent); }
 .pl-time { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); }
 .pl-now { font-family: var(--serif); font-size: 14px; color: var(--muted); margin: 10px 0; max-width: 70ch; }
+.pl-head { font-size: 16px; margin: 18px 0 4px; }
+.pl-chapters { list-style: none; margin: 0 0 8px; padding: 0; }
+.pl-chapters li {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px;
+  border-bottom: 1px solid var(--rule); padding: 8px 0;
+}
+.plc-name { font-family: var(--serif); font-weight: 600; display: flex; flex-direction: column; }
+.plc-name small { font-family: var(--sans); font-weight: 400; font-size: 12px; color: var(--muted); }
+.plc-actions { display: flex; align-items: center; gap: 6px; }
+.plc-actions a { color: var(--accent); font-size: 13px; }
+.pl-details { margin-top: 12px; }
+.pl-details summary { cursor: pointer; font-size: 13px; color: var(--muted); }
 .pl-list { margin: 10px 0 0; padding-left: 1.6em; max-height: 260px; overflow-y: auto; font-size: 13px; }
 .pl-list li { padding: 3px 0; cursor: pointer; color: var(--muted); }
 .pl-list li.is-current { color: var(--accent); font-weight: 700; }

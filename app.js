@@ -1,5 +1,5 @@
 /**
- * 小説工房 app.js v1.0.2
+ * 小説工房 app.js v1.0.3
  * 会員認証 / 設定UI / プロンプト組み立て / 章ごとの連鎖生成 / 朗読 / ロケ地 / ドライブ保存
  */
 (() => {
@@ -14,11 +14,11 @@
     token: null,
     user: null,
     novel: blankNovel(),
-    current: 0,          // 本文画面で選択中の章
+    current: 0,          // 本文画面で選択中の章（-1 は全文の通し読み）
     editing: false,
     busy: false,
     abort: null,
-    audio: { chunks: [], index: -1 },
+    audio: { chunks: [], index: -1, done: {}, driveUrls: {} },
     reader: { vertical: false, size: 1.0625 }
   };
 
@@ -58,7 +58,7 @@
     $('#statusbar').hidden = !on;
     $('#status-text').textContent = msg;
     $$('#app button').forEach(b => {
-      if (['btn-abort', 'pl-play', 'pl-prev', 'pl-next', 'pl-dl-one', 'pl-dl-all', 'btn-theme'].includes(b.id)) return;
+      if (['btn-abort', 'btn-theme', 'btn-copy-all'].includes(b.id) || b.closest('#player')) return;
       if (b.classList.contains('step') || b.classList.contains('toc-item')) return;
       b.disabled = on;
     });
@@ -640,6 +640,7 @@ ${fullText}`;
   async function writeOne() {
     if (!state.novel.plot) { toast('先に構成を作ってください', true); return; }
     const idx = state.current;
+    if (idx < 0) { toast('左の一覧から、書く章を選んでください', true); return; }
     if (state.novel.chapters[idx] && state.novel.chapters[idx].text &&
       !confirm(`第${idx + 1}章を書き直します。今の本文は置き換わります。`)) return;
     state.abort = new AbortController();
@@ -688,7 +689,10 @@ ${fullText}`;
   function renderToc() {
     const p = state.novel.plot;
     if (!p) { $('#toc-list').innerHTML = ''; return; }
-    $('#toc-list').innerHTML = p.chapters.map((c, i) => {
+    const total = state.novel.chapters.reduce((a, c) => a + (c && c.text ? c.text.length : 0), 0);
+    const full = `<li><button type="button" class="toc-item toc-full${state.current === -1 ? ' is-current' : ''}" data-i="-1">
+        <span>全文（通し読み）</span><small>${total ? `${fmtNum(total)}字` : 'まだ本文がありません'}</small></button></li>`;
+    $('#toc-list').innerHTML = full + p.chapters.map((c, i) => {
       const ch = state.novel.chapters[i];
       const done = ch && ch.text;
       return `<li><button type="button" class="toc-item${i === state.current ? ' is-current' : ''}${done ? ' is-written' : ''}" data-i="${i}">
@@ -703,6 +707,21 @@ ${fullText}`;
     el.classList.toggle('is-vertical', state.reader.vertical);
     document.documentElement.style.setProperty('--reader-size', state.reader.size + 'rem');
     if (!p) { el.innerHTML = '<p class="placeholder">構成を作ると、ここに本文が表示されます。</p>'; $('#char-count').textContent = ''; return; }
+    if (state.current === -1) {
+      const parts = p.chapters.map((c, i) => {
+        const x = state.novel.chapters[i];
+        if (!x || !x.text) return '';
+        return `<h3>第${kanji(i + 1)}章　${esc(c.title)}</h3>` + x.text.split('\n').map(l => `<p>${esc(l) || '&nbsp;'}</p>`).join('');
+      }).join('');
+      el.innerHTML = parts ? `<h2 class="ms-title">${esc(p.title)}</h2>` + parts
+        : '<p class="placeholder">まだ本文がありません。左の一覧から章を選んで書き始めてください。</p>';
+      const total = state.novel.chapters.reduce((a, c) => a + (c && c.text ? c.text.length : 0), 0);
+      $('#char-count').textContent = total ? `全文 ${fmtNum(total)}字` : '';
+      if (state.reader.vertical) el.scrollLeft = el.scrollWidth; else el.scrollTop = 0;
+      $('#btn-vertical').setAttribute('aria-pressed', String(state.reader.vertical));
+      $('#btn-edit').disabled = true;
+      return;
+    }
     const ch = state.novel.chapters[state.current];
     const title = `第${kanji(state.current + 1)}章　${p.chapters[state.current].title}`;
     if (!ch || !ch.text) {
@@ -727,6 +746,7 @@ ${fullText}`;
   }
 
   function startEdit() {
+    if (state.current < 0) return;
     const ch = state.novel.chapters[state.current];
     if (!ch || !ch.text) return;
     state.editing = true;
@@ -777,7 +797,8 @@ ${fullText}`;
       if (buf.length > max * 0.6) push(); else buf += '\n';
     });
     push();
-    return out;
+    // 文の途中で終わると、AIが続きを勝手に読もうとして余計な音が出やすいので句点で閉じる
+    return out.map(t => (/[。！？!?」』）)…―]$/.test(t) ? t : t + '。'));
   }
 
   function b64ToBytes(b64) {
@@ -785,6 +806,162 @@ ${fullText}`;
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     return bytes;
+  }
+
+  function bytesToB64(bytes) {
+    let s = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(s);
+  }
+
+  // WAV（16bit・モノラル）→ { rate, samples:Int16Array }
+  function wavToPcm(bytes) {
+    const w = parseWav(bytes);
+    if (!w || w.bits !== 16 || w.channels !== 1) throw new Error('音声の形式が想定と違います');
+    const len = Math.floor(w.data.length / 2);
+    const buf = new ArrayBuffer(len * 2);
+    new Uint8Array(buf).set(w.data.subarray(0, len * 2));
+    return { rate: w.sampleRate, samples: new Int16Array(buf) };
+  }
+
+  function pcmToWav(samples, rate) {
+    const dataLen = samples.length * 2;
+    const out = new Uint8Array(44 + dataLen);
+    const v = new DataView(out.buffer);
+    const w = (o, s) => { for (let i = 0; i < s.length; i++) out[o + i] = s.charCodeAt(i); };
+    w(0, 'RIFF'); v.setUint32(4, 36 + dataLen, true); w(8, 'WAVE');
+    w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    w(36, 'data'); v.setUint32(40, dataLen, true);
+    out.set(new Uint8Array(samples.buffer, samples.byteOffset, dataLen), 44);
+    return out;
+  }
+
+  /**
+   * 末尾の余計な音（「が〜」など）を取り除く。
+   * 音量で発声区間を拾い、最後の発声が「短い」かつ「直前と間が空いている」ときは、
+   * 本文とは関係のない音とみなして切り落とす。あわせて末尾の無音も詰め、短くフェードアウトする。
+   */
+  function trimTail(samples, rate) {
+    const T = C.TTS_TRIM || {};
+    if (T.enabled === false) return samples;
+    const FR = 0.02;
+    const fl = Math.max(1, Math.round(rate * FR));
+    const n = Math.floor(samples.length / fl);
+    if (n < 10) return samples;
+    const rms = new Float32Array(n);
+    let max = 0;
+    for (let f = 0; f < n; f++) {
+      let sum = 0;
+      const o = f * fl;
+      for (let i = 0; i < fl; i++) { const x = samples[o + i]; sum += x * x; }
+      rms[f] = Math.sqrt(sum / fl);
+      if (rms[f] > max) max = rms[f];
+    }
+    const thr = Math.max(T.minLevel ?? 250, max * (T.ratio ?? 0.07));
+    const joinGap = Math.round(0.15 / FR);
+    const segs = [];
+    let cur = null;
+    for (let f = 0; f < n; f++) {
+      if (rms[f] <= thr) continue;
+      if (cur && f - cur.e <= joinGap) cur.e = f + 1;
+      else { cur = { s: f, e: f + 1 }; segs.push(cur); }
+    }
+    if (!segs.length) return samples;
+
+    const maxSec = T.tailMaxSec ?? 0.7;
+    const gapSec = T.gapSec ?? 0.3;
+    let last = segs.length - 1, dropped = 0;
+    while (last > 0 && dropped < 2) {
+      const s = segs[last], p = segs[last - 1];
+      if ((s.e - s.s) * FR < maxSec && (s.s - p.e) * FR >= gapSec) { last--; dropped++; }
+      else break;
+    }
+    const end = Math.min(samples.length, Math.min(n, segs[last].e + Math.round(0.25 / FR)) * fl);
+    const out = samples.slice(0, end);
+    const fade = Math.min(out.length, Math.round(rate * 0.03));
+    for (let i = 0; i < fade; i++) {
+      const k = out.length - 1 - i;
+      out[k] = Math.round(out[k] * (i / fade));
+    }
+    return out;
+  }
+
+  // 区切りをつなぐ（間に無音を入れる）
+  function joinPcm(list, rate) {
+    const total = list.reduce((a, x) => a + x.samples.length + Math.round(rate * x.pause), 0);
+    const out = new Int16Array(total);
+    let off = 0;
+    list.forEach(x => { out.set(x.samples, off); off += x.samples.length + Math.round(rate * x.pause); });
+    return out;
+  }
+
+  function chapterPcm(chIdx) {
+    const parts = state.audio.chunks.filter(c => c.chapter === chIdx);
+    if (!parts.length) return null;
+    const rate = parts[0].rate;
+    const list = parts.map((c, i) => ({ samples: c.samples, pause: c.head ? 0.9 : (i === parts.length - 1 ? 1.0 : 0.35) }));
+    return { rate, samples: joinPcm(list, rate) };
+  }
+
+  function allPcm() {
+    const chs = [...new Set(state.audio.chunks.map(c => c.chapter))];
+    if (!chs.length) return null;
+    const pcs = chs.map(chapterPcm);
+    const rate = pcs[0].rate;
+    return { rate, samples: joinPcm(pcs.map(p => ({ samples: p.samples, pause: 1.0 })), rate) };
+  }
+
+  let lamePromise = null;
+  function loadLame() {
+    if (window.lamejs) return Promise.resolve();
+    if (!lamePromise) {
+      lamePromise = new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = C.LAMEJS_URL;
+        s.onload = () => res();
+        s.onerror = () => { lamePromise = null; rej(new Error('MP3に変換する部品を読み込めませんでした')); };
+        document.head.appendChild(s);
+      });
+    }
+    return lamePromise;
+  }
+
+  async function encodeMp3(samples, rate, onProgress) {
+    await loadLame();
+    const enc = new window.lamejs.Mp3Encoder(1, rate, C.MP3_KBPS || 64);
+    const parts = [];
+    const block = 1152;
+    for (let i = 0; i < samples.length; i += block) {
+      const b = enc.encodeBuffer(samples.subarray(i, i + block));
+      if (b.length) parts.push(new Uint8Array(b));
+      if (i % (block * 500) === 0) {
+        if (onProgress) onProgress(i / samples.length);
+        await new Promise(r => setTimeout(r, 0)); // 画面を固めない
+      }
+    }
+    const f = enc.flush();
+    if (f.length) parts.push(new Uint8Array(f));
+    return new Blob(parts, { type: 'audio/mpeg' });
+  }
+
+  const chapterFileName = (i, ext) =>
+    `${safeFile(state.novel.title)}_第${String(i + 1).padStart(2, '0')}章_${safeFile(state.novel.plot.chapters[i].title)}.${ext}`;
+
+  async function saveChapterToDrive(i) {
+    const pc = chapterPcm(i);
+    if (!pc) return;
+    status(`第${i + 1}章の音声をMP3にまとめています…`);
+    const blob = await encodeMp3(pc.samples, pc.rate, r => status(`第${i + 1}章の音声をMP3にまとめています…（${Math.round(r * 100)}%）`));
+    const b64 = bytesToB64(new Uint8Array(await blob.arrayBuffer()));
+    status(`第${i + 1}章の音声をドライブに保存しています…`);
+    const r = await api('saveAudio', {
+      novelId: state.novel.novelId,
+      fileName: `第${String(i + 1).padStart(2, '0')}章_${safeFile(state.novel.plot.chapters[i].title)}.mp3`,
+      audioBase64: b64, mimeType: 'audio/mpeg'
+    }, { signal: state.abort.signal });
+    state.audio.driveUrls[i] = r.fileUrl;
+    renderPlaylist();
   }
 
   async function generateTts() {
@@ -808,7 +985,7 @@ ${fullText}`;
 
     stopAudio();
     state.audio.chunks.forEach(c => URL.revokeObjectURL(c.url));
-    state.audio = { chunks: [], index: -1 };
+    state.audio = { chunks: [], index: -1, done: {}, driveUrls: {} };
 
     state.abort = new AbortController();
     setBusy(true, '音声を準備しています…');
@@ -820,33 +997,52 @@ ${fullText}`;
       for (let k = 0; k < jobs.length; k++) {
         const j = jobs[k];
         status(`音声を作っています…（${k + 1}／${jobs.length}）`);
-        const r = await api('tts', {
-          text: j.text, voice,
-          novelId: toDrive ? state.novel.novelId : '',
-          fileName: `ch${String(j.chapter + 1).padStart(2, '0')}_${String(k + 1).padStart(3, '0')}.wav`
-        }, { signal: state.abort.signal });
-        const bytes = b64ToBytes(r.audioBase64);
-        const blob = new Blob([bytes], { type: 'audio/wav' });
+        const r = await api('tts', { text: j.text, voice }, { signal: state.abort.signal });
+        const pcm = wavToPcm(b64ToBytes(r.audioBase64));
+        const samples = trimTail(pcm.samples, pcm.rate);
+        const wav = pcmToWav(samples, pcm.rate);
         state.audio.chunks.push({
-          chapter: j.chapter,
+          chapter: j.chapter, head: !!j.head,
           label: j.head ? `第${j.chapter + 1}章 章題` : j.text.slice(0, 28) + (j.text.length > 28 ? '…' : ''),
-          text: j.text, url: URL.createObjectURL(blob), bytes, fileUrl: r.fileUrl || ''
+          text: j.text, rate: pcm.rate, samples,
+          url: URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }))
         });
+        const chapterEnds = k === jobs.length - 1 || jobs[k + 1].chapter !== j.chapter;
+        if (chapterEnds) {
+          state.audio.done[j.chapter] = true;
+          if (toDrive) await saveChapterToDrive(j.chapter);
+        }
         renderPlaylist();
         if (k === 0) loadChunk(0, false);
       }
-      toast(`音声を${jobs.length}個作りました`);
+      toast(toDrive ? '音声を作り、章ごとにドライブへ保存しました' : '音声を作りました');
     } catch (err) {
       if (err.code !== 'ABORT') toast(err.message, true);
       else if (state.audio.chunks.length) toast(`中断しました（${state.audio.chunks.length}個まで作成済み）`);
-    } finally { setBusy(false); }
+    } finally { setBusy(false); renderPlaylist(); }
   }
 
   function renderPlaylist() {
     const chunks = state.audio.chunks;
     $('#player').hidden = !chunks.length;
-    $('#pl-list').innerHTML = chunks.map((c, i) => `<li data-i="${i}" class="${i === state.audio.index ? 'is-current' : ''}">
-      ${esc(c.label)}${c.fileUrl ? ` <a href="${esc(c.fileUrl)}" target="_blank" rel="noopener">ドライブ</a>` : ''}</li>`).join('');
+    $('#pl-list').innerHTML = chunks.map((c, i) => `<li data-i="${i}" class="${i === state.audio.index ? 'is-current' : ''}">${esc(c.label)}</li>`).join('');
+
+    const p = state.novel.plot;
+    const chs = [...new Set(chunks.map(c => c.chapter))];
+    $('#pl-chapters').innerHTML = chs.map(i => {
+      const pc = chapterPcm(i);
+      const sec = pc ? pc.samples.length / pc.rate : 0;
+      const title = p && p.chapters[i] ? p.chapters[i].title : '';
+      const partial = !state.audio.done[i];
+      const drive = state.audio.driveUrls[i];
+      return `<li>
+        <span class="plc-name">第${kanji(i + 1)}章　${esc(title)}<small>${fmtTime(sec)}${partial ? '（作成中・途中まで）' : ''}</small></span>
+        <span class="plc-actions">
+          <button type="button" class="btn ghost small" data-ch="${i}" data-fmt="mp3">MP3</button>
+          <button type="button" class="btn ghost small" data-ch="${i}" data-fmt="wav">WAV</button>
+          ${drive ? `<a href="${esc(drive)}" target="_blank" rel="noopener">ドライブ</a>` : ''}
+        </span></li>`;
+    }).join('');
   }
 
   function loadChunk(i, autoplay = true) {
@@ -867,6 +1063,21 @@ ${fullText}`;
 
   const fmtTime = s => { s = Math.max(0, Math.floor(s || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 
+  async function downloadPcm(pc, baseName, fmt, btn) {
+    if (!pc) return;
+    if (fmt === 'wav') { download(`${baseName}.wav`, new Blob([pcmToWav(pc.samples, pc.rate)], { type: 'audio/wav' })); return; }
+    const label = btn ? btn.textContent : '';
+    try {
+      if (btn) { btn.disabled = true; btn.textContent = '変換中…'; }
+      const blob = await encodeMp3(pc.samples, pc.rate, r => { if (btn) btn.textContent = `変換中 ${Math.round(r * 100)}%`; });
+      download(`${baseName}.mp3`, blob);
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = label; }
+    }
+  }
+
   function bindPlayer() {
     const a = $('#audio');
     $('#pl-play').addEventListener('click', () => {
@@ -886,36 +1097,20 @@ ${fullText}`;
     });
     $('#pl-seek').addEventListener('input', e => { if (a.duration) a.currentTime = a.duration * num(e.target.value) / 1000; });
     $('#pl-list').addEventListener('click', e => {
-      if (e.target.closest('a')) return;
       const li = e.target.closest('li'); if (li) loadChunk(num(li.dataset.i));
+    });
+    $('#pl-chapters').addEventListener('click', e => {
+      const b = e.target.closest('[data-ch]'); if (!b) return;
+      const i = num(b.dataset.ch);
+      downloadPcm(chapterPcm(i), chapterFileName(i, '').replace(/\.$/, ''), b.dataset.fmt, b);
     });
     $('#pl-dl-one').addEventListener('click', () => {
       const c = state.audio.chunks[state.audio.index]; if (!c) return;
-      download(`${safeFile(state.novel.title)}_${String(state.audio.index + 1).padStart(3, '0')}.wav`, new Blob([c.bytes], { type: 'audio/wav' }));
+      download(`${safeFile(state.novel.title)}_${String(state.audio.index + 1).padStart(3, '0')}.wav`,
+        new Blob([pcmToWav(c.samples, c.rate)], { type: 'audio/wav' }));
     });
-    $('#pl-dl-all').addEventListener('click', () => {
-      if (!state.audio.chunks.length) return;
-      download(`${safeFile(state.novel.title)}_朗読.wav`, mergeWavs(state.audio.chunks.map(c => c.bytes)));
-    });
-  }
-
-  // 複数WAV(同一フォーマット)のPCMをつないで1本にする
-  function mergeWavs(list) {
-    const parsed = list.map(parseWav).filter(Boolean);
-    if (!parsed.length) throw new Error('音声を結合できませんでした');
-    const { sampleRate, channels, bits } = parsed[0];
-    const total = parsed.reduce((a, p) => a + p.data.length, 0);
-    const out = new Uint8Array(44 + total);
-    const v = new DataView(out.buffer);
-    const w = (o, s) => { for (let i = 0; i < s.length; i++) out[o + i] = s.charCodeAt(i); };
-    w(0, 'RIFF'); v.setUint32(4, 36 + total, true); w(8, 'WAVE');
-    w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, channels, true);
-    v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate * channels * bits / 8, true);
-    v.setUint16(32, channels * bits / 8, true); v.setUint16(34, bits, true);
-    w(36, 'data'); v.setUint32(40, total, true);
-    let off = 44;
-    parsed.forEach(p => { out.set(p.data, off); off += p.data.length; });
-    return new Blob([out], { type: 'audio/wav' });
+    $('#pl-dl-all-mp3').addEventListener('click', e => downloadPcm(allPcm(), `${safeFile(state.novel.title)}_朗読`, 'mp3', e.currentTarget));
+    $('#pl-dl-all').addEventListener('click', e => downloadPcm(allPcm(), `${safeFile(state.novel.title)}_朗読`, 'wav', e.currentTarget));
   }
 
   function parseWav(bytes) {
@@ -926,7 +1121,7 @@ ${fullText}`;
     while (o + 8 <= bytes.length) {
       const id = str(o, 4), size = v.getUint32(o + 4, true);
       if (id === 'fmt ') fmt = { channels: v.getUint16(o + 10, true), sampleRate: v.getUint32(o + 12, true), bits: v.getUint16(o + 22, true) };
-      if (id === 'data' && fmt) return Object.assign(fmt, { data: bytes.slice(o + 8, o + 8 + size) });
+      if (id === 'data' && fmt) return Object.assign(fmt, { data: bytes.slice(o + 8, o + 8 + Math.min(size, bytes.length - o - 8)) });
       o += 8 + size + (size % 2);
     }
     return null;
@@ -1112,6 +1307,80 @@ ${fullText}`;
     return out.join('\n');
   }
 
+  function hasText() {
+    return state.novel.plot && state.novel.chapters.some(c => c && c.text);
+  }
+
+  // 読書用HTML（縦書き／横書き切替・印刷対応）
+  function buildHtml() {
+    const n = state.novel, p = n.plot;
+    if (!p) return '';
+    const body = p.chapters.map((c, i) => {
+      const ch = n.chapters[i];
+      if (!ch || !ch.text) return '';
+      return `<section class="ch"><h2>第${kanji(i + 1)}章　${esc(c.title)}</h2>${ch.text.split('\n').map(l => `<p>${esc(l)}</p>`).join('')}</section>`;
+    }).join('\n');
+    return `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(p.title)}</title>
+<style>
+:root{--bg:#F6F7F2;--ink:#1F2530;--muted:#5C6573;--rule:#C9CFC6;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#1C2129;--ink:#DADDD5;--muted:#8D96A3;--rule:#2E3540;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Hiragino Mincho ProN","Yu Mincho","YuMincho","Noto Serif JP",serif;font-size:17px;line-height:2}
+.bar{position:sticky;top:0;z-index:1;display:flex;gap:8px;justify-content:flex-end;padding:8px 12px;background:var(--bg);border-bottom:1px solid var(--rule);font-family:sans-serif;font-size:14px}
+.bar button{font:inherit;padding:4px 12px;border:1px solid var(--rule);border-radius:6px;background:transparent;color:var(--ink);cursor:pointer}
+main{max-width:40em;margin:0 auto;padding:32px 20px 64px}
+h1{font-size:1.8em;letter-spacing:.1em;margin:0 0 .4em;font-weight:600}
+.log{color:var(--muted);margin:0 0 2.4em}
+h2{font-size:1.25em;letter-spacing:.08em;margin:2.4em 0 1.2em;font-weight:600}
+p{margin:0}
+body.v main{writing-mode:vertical-rl;max-width:none;height:calc(100vh - 52px);overflow-x:auto;padding:28px 32px;line-height:1.95}
+body.v h1{margin:0 0 0 .4em}
+body.v .log{margin:0 0 0 2.4em}
+body.v h2{margin:0 2.4em 0 1.2em}
+@media print{.bar{display:none}body{font-size:10.5pt;background:#fff;color:#000}body.v main{writing-mode:horizontal-tb;height:auto;overflow:visible;max-width:none;padding:0}.ch{break-before:page}}
+</style>
+</head>
+<body class="v">
+<div class="bar"><button type="button" id="mode">横書きにする</button><button type="button" onclick="print()">印刷・PDF</button></div>
+<main>
+<h1>${esc(p.title)}</h1>
+${p.logline ? `<p class="log">${esc(p.logline)}</p>` : ''}
+${body}
+</main>
+<script>
+var b=document.getElementById('mode');
+b.onclick=function(){document.body.classList.toggle('v');b.textContent=document.body.classList.contains('v')?'横書きにする':'縦書きにする';};
+</script>
+</body>
+</html>`;
+  }
+
+  async function copyAll() {
+    if (!hasText()) { toast('まだ本文がありません', true); return; }
+    const text = buildPlainText();
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+    }
+    toast(`全文（${fmtNum(text.length)}字）をコピーしました`);
+  }
+
+  function exportAll(fmt) {
+    if (!hasText()) { toast('まだ本文がありません', true); return; }
+    const base = safeFile(state.novel.title);
+    if (fmt === 'txt') download(`${base}.txt`, buildPlainText(), 'text/plain;charset=utf-8');
+    if (fmt === 'md') download(`${base}.md`, buildMarkdown(), 'text/markdown;charset=utf-8');
+    if (fmt === 'html') download(`${base}.html`, buildHtml(), 'text/html;charset=utf-8');
+  }
+
   function snapshot() {
     const n = state.novel;
     return {
@@ -1132,6 +1401,7 @@ ${fullText}`;
         exports: {
           markdown: buildMarkdown(),
           text: buildPlainText(),
+          html: buildHtml(),
           plotJson: JSON.stringify(state.novel.plot, null, 2),
           earthJson: hasLoc ? JSON.stringify(buildEarthJson(), null, 2) : '',
           kml: hasLoc ? buildKml() : ''
@@ -1200,7 +1470,7 @@ ${fullText}`;
     state.current = 0;
     stopAudio();
     state.audio.chunks.forEach(c => URL.revokeObjectURL(c.url));
-    state.audio = { chunks: [], index: -1 };
+    state.audio = { chunks: [], index: -1, done: {}, driveUrls: {} };
     writeSettings(C.DEFAULTS);
     $('#drive-link').textContent = '';
     saveDraft();
@@ -1315,6 +1585,8 @@ ${fullText}`;
       renderWrite();
     });
     $('#btn-write-one').addEventListener('click', writeOne);
+    $('#btn-copy-all').addEventListener('click', copyAll);
+    $$('[data-export]').forEach(b => b.addEventListener('click', () => exportAll(b.dataset.export)));
     $('#btn-write-all').addEventListener('click', writeAll);
     $('#btn-vertical').addEventListener('click', () => { state.reader.vertical = !state.reader.vertical; saveReader(); renderReader(); });
     $('#btn-font-up').addEventListener('click', () => { state.reader.size = Math.min(1.5, +(state.reader.size + 0.0625).toFixed(4)); saveReader(); renderReader(); });
@@ -1334,8 +1606,9 @@ ${fullText}`;
     bindLocationTable();
 
     $('#btn-save-drive').addEventListener('click', () => saveToDrive(false));
-    $('#btn-dl-md').addEventListener('click', () => { if (state.novel.plot) download(`${safeFile(state.novel.title)}.md`, buildMarkdown(), 'text/markdown'); });
-    $('#btn-dl-txt').addEventListener('click', () => { if (state.novel.plot) download(`${safeFile(state.novel.title)}.txt`, buildPlainText(), 'text/plain'); });
+    $('#btn-dl-md').addEventListener('click', () => exportAll('md'));
+    $('#btn-dl-txt').addEventListener('click', () => exportAll('txt'));
+    $('#btn-dl-html').addEventListener('click', () => exportAll('html'));
     $('#btn-dl-plot').addEventListener('click', () => { if (state.novel.plot) download(`${safeFile(state.novel.title)}_構成.json`, JSON.stringify(state.novel.plot, null, 2), 'application/json'); });
     $('#btn-refresh-list').addEventListener('click', loadWorks);
     $('#works-list').addEventListener('click', e => {

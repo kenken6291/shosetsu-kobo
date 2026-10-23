@@ -5,7 +5,7 @@
  */
 window.APP_CONFIG = {
   APP_NAME: '小説工房',
-  VERSION: 'v1.0.2',
+  VERSION: 'v1.0.3',
   UPDATED: '2026-10-23',
 
   // ▼ GAS Web App の URL（デプロイ → ウェブアプリ のURL）
@@ -32,6 +32,17 @@ window.APP_CONFIG = {
   CONTEXT_TAIL_CHARS: 1500,   // 次章に渡す「直前の本文」の文字数
   MAX_CONTINUE: 2,            // 出力上限で途切れたときの自動継ぎ足し回数
   TTS_CHUNK_CHARS: 450,       // 朗読1ファイルあたりの最大文字数
+
+  // 朗読の末尾に出る余計な音（「が〜」など）の除去
+  TTS_TRIM: {
+    enabled: true,
+    tailMaxSec: 0.7,  // 最後の発声がこれより短く…
+    gapSec: 0.3,      // …直前の発声とこれ以上の間があれば、余計な音として切り落とす
+    ratio: 0.07,      // 発声とみなす音量（最大音量に対する割合）
+    minLevel: 250
+  },
+  MP3_KBPS: 64,               // 章ごとのMP3の音質（kbps）
+  LAMEJS_URL: 'https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.1/lame.min.js',
   LOCATION_MAX: 10,           // ロケ地の最大抽出数
   REQUEST_TIMEOUT_MS: 330000, // GASの実行上限(6分)に合わせる
 

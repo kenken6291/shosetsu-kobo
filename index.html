@@ -127,11 +127,11 @@
           </li>
           <li>
             <strong>本文</strong>
-            <p>「残りの章を順に書く」で第一章から順に書き進めます。1章につき1〜3分かかります。前の章の要約と直前の場面を引き継ぐので、章は前から順に書いてください。左の章一覧から章を選び、「この章を書く／書き直す」で1章だけ書き直すこともできます。「この章を編集」で本文を直接手直しできます。</p>
+            <p>「残りの章を順に書く」で第一章から順に書き進めます。1章につき1〜3分かかります。前の章の要約と直前の場面を引き継ぐので、章は前から順に書いてください。左の章一覧から章を選び、「この章を書く／書き直す」で1章だけ書き直すこともできます。「この章を編集」で本文を直接手直しできます。一覧のいちばん上の「全文（通し読み）」を選ぶと、全章を続けて読めます。左下の「全文を書き出す」から、全文のコピー、テキスト・Markdown・読書用HTML（縦書き表示・印刷やPDF保存に対応）の書き出しができます。</p>
           </li>
           <li>
             <strong>朗読</strong>
-            <p>読む範囲（全章または1章）と声を選び、「音声を作る」を押します。本文を短く区切って順に音声にするため、1章で数分〜十数分かかります。最初の区切りができた時点から再生できます。「全部つなげて保存」で1本のWAVファイルにまとめて保存できます。</p>
+            <p>読む範囲（全章または1章）と声を選び、「音声を作る」を押します。本文を短く区切って順に音声にするため、1章で数分〜十数分かかります。最初の区切りができた時点から再生できます。「章ごとのファイル」で、区切りを1章1ファイルにつないでMP3またはWAVで保存できます。「全章を1つにつなげて保存」で全章を1本にもできます。ドライブ保存にチェックを入れると、章ごとのMP3がドライブにも保存されます。</p>
           </li>
           <li>
             <strong>ロケ地</strong>
@@ -139,7 +139,7 @@
           </li>
           <li>
             <strong>保存</strong>
-            <p>「Googleドライブに保存」で、本文（txt・md）、構成、ロケ地データを作品ごとのフォルダにまとめて保存します。保存した作品は「保存した作品」の一覧から「開く」で続きを書けます。</p>
+            <p>「Googleドライブに保存」で、本文（txt・md・読書用html）、構成、ロケ地データを作品ごとのフォルダにまとめて保存します。保存した作品は「保存した作品」の一覧から「開く」で続きを書けます。</p>
           </li>
         </ol>
       </section>
@@ -250,6 +250,13 @@
             <button type="button" class="btn primary wide" id="btn-write-all">残りの章を順に書く</button>
             <button type="button" class="btn ghost wide" id="btn-write-one">この章を書く／書き直す</button>
           </div>
+          <div class="export-box">
+            <p class="export-title">全文を書き出す</p>
+            <button type="button" class="btn ghost small wide" id="btn-copy-all">全文をコピー</button>
+            <button type="button" class="btn ghost small wide" data-export="txt">テキスト（.txt）</button>
+            <button type="button" class="btn ghost small wide" data-export="md">Markdown（.md）</button>
+            <button type="button" class="btn ghost small wide" data-export="html">読書用HTML（縦書き・印刷）</button>
+          </div>
         </aside>
         <div class="reader-wrap">
           <div class="reader-tools">
@@ -281,7 +288,7 @@
         <label class="field"><span>読む範囲</span><select id="tts-scope"></select></label>
         <label class="field"><span>声</span><select id="tts-voice"></select></label>
       </div>
-      <label class="check"><input type="checkbox" id="tts-drive"> 作った音声をGoogleドライブにも保存する</label>
+      <label class="check"><input type="checkbox" id="tts-drive"> 作った音声を章ごとのMP3にしてGoogleドライブにも保存する</label>
       <div class="actions">
         <button type="button" class="btn primary" id="btn-tts">音声を作る</button>
       </div>
@@ -296,11 +303,18 @@
           <span class="pl-time" id="pl-time">0:00 / 0:00</span>
         </div>
         <p class="pl-now" id="pl-now"></p>
+        <h3 class="pl-head">章ごとのファイル</h3>
+        <p class="hint">区切りを1章1ファイルにつないで保存します。MP3は小さく、WAVは音質そのままです。</p>
+        <ul class="pl-chapters" id="pl-chapters"></ul>
         <div class="actions">
-          <button type="button" class="btn ghost small" id="pl-dl-one">この区切りを保存</button>
-          <button type="button" class="btn ghost small" id="pl-dl-all">全部つなげて保存（WAV）</button>
+          <button type="button" class="btn ghost small" id="pl-dl-all-mp3">全章を1つにつなげて保存（MP3）</button>
+          <button type="button" class="btn ghost small" id="pl-dl-all">全章を1つにつなげて保存（WAV）</button>
+          <button type="button" class="btn ghost small" id="pl-dl-one">再生中の区切りだけ保存</button>
         </div>
-        <ol class="pl-list" id="pl-list"></ol>
+        <details class="pl-details">
+          <summary>区切りの一覧</summary>
+          <ol class="pl-list" id="pl-list"></ol>
+        </details>
       </div>
     </section>
 
@@ -330,12 +344,13 @@
     <section class="panel" id="panel-library">
       <header class="panel-head">
         <h2>保存と作品一覧</h2>
-        <p>Googleドライブには、本文（txt / md）、構成（json）、ロケ地データ（json / kml）をまとめて保存します。</p>
+        <p>Googleドライブには、本文（txt / md / 読書用html）、構成（json）、ロケ地データ（json / kml）をまとめて保存します。</p>
       </header>
       <div class="actions">
         <button type="button" class="btn primary" id="btn-save-drive">Googleドライブに保存</button>
         <button type="button" class="btn ghost" id="btn-dl-md">Markdownを保存</button>
         <button type="button" class="btn ghost" id="btn-dl-txt">テキストを保存</button>
+        <button type="button" class="btn ghost" id="btn-dl-html">読書用HTMLを保存</button>
         <button type="button" class="btn ghost" id="btn-dl-plot">構成JSONを保存</button>
       </div>
       <p class="drive-link" id="drive-link"></p>
