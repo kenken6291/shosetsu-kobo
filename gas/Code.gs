@@ -1,5 +1,5 @@
 /**
- * 小説工房 Code.gs v1.0.1
+ * 小説工房 Code.gs v1.0.6
  * GitHub Pages から text/plain の POST(JSON) を受けるAPI。
  *
  * スクリプトプロパティ:
@@ -15,7 +15,7 @@
  * ※ コードを変えたら「デプロイを管理 → 編集 → 新バージョン」で再デプロイすること。
  */
 
-const APP = { NAME: '小説工房', VERSION: '1.0.1' };
+const APP = { NAME: '小説工房', VERSION: '1.0.6' };
 const DEFAULT_TEXT_MODEL = 'gemini-2.5-flash';
 const DEFAULT_TTS_MODEL = 'gemini-2.5-flash-preview-tts';
 const SESSION_TTL = 21600;               // 6時間（CacheService上限）
@@ -48,6 +48,7 @@ function doPost(e) {
     resetPassword: resetPassword_,
     generate: generate_,
     tts: tts_,
+    saveAudio: saveAudio_,
     saveNovel: saveNovel_,
     listNovels: listNovels_,
     loadNovel: loadNovel_,
@@ -59,7 +60,10 @@ function doPost(e) {
     return json_(Object.assign({ ok: true }, fn(req)));
   } catch (err) {
     console.error(req.action, err && err.stack ? err.stack : err);
-    return json_({ ok: false, error: (err && err.message) || String(err), code: (err && err.code) || 'ERROR' });
+    return json_({
+      ok: false, error: (err && err.message) || String(err), code: (err && err.code) || 'ERROR',
+      retryAfter: (err && err.retryAfter) || 0
+    });
   }
 }
 
@@ -398,22 +402,72 @@ function callGemini_(o) {
 
 function fetchGemini_(model, body, key) {
   const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent';
+  const started = Date.now();
   let last = '';
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 4; i++) {
     const res = UrlFetchApp.fetch(url, {
       method: 'post', contentType: 'application/json',
       headers: { 'x-goog-api-key': key },
       payload: JSON.stringify(body), muteHttpExceptions: true
     });
     const code = res.getResponseCode();
-    if (code === 200) return JSON.parse(res.getContentText());
-    last = code + ' ' + res.getContentText().slice(0, 300);
-    if (code === 429 || code >= 500) { Utilities.sleep(2000 * (i + 1)); continue; }
+    const txt = res.getContentText();
+    if (code === 200) return JSON.parse(txt);
+    last = code + ' ' + txt.slice(0, 300);
+
+    if (code === 429) {
+      const info = parse429_(txt);
+      if (info.daily) {
+        fail_('今日のAIの利用上限（' + (info.what || '無料枠') + '）に達しました。日本時間の夕方以降（米国太平洋時間の0時）に回復します', 'GEMINI_QUOTA');
+      }
+      const wait = info.retrySec || 20;
+      // 短い待ちならサーバー側で待って再試行（GASの6分制限に余裕を残す）
+      if (wait <= 25 && (Date.now() - started) / 1000 + wait < 150) {
+        Utilities.sleep(wait * 1000 + 500);
+        continue;
+      }
+      const e = new Error('AIが混み合っています。少し待ってからお試しください');
+      e.code = 'GEMINI_BUSY';
+      e.retryAfter = Math.ceil(wait);
+      throw e;
+    }
+    if (code >= 500) { Utilities.sleep(3000 * (i + 1)); continue; }
     break;
   }
   console.error('Gemini error', last);
-  if (/^429/.test(last)) fail_('AIが混み合っています。少し待ってからお試しください', 'GEMINI_BUSY');
+  if (/^429/.test(last)) {
+    const e = new Error('AIが混み合っています。少し待ってからお試しください');
+    e.code = 'GEMINI_BUSY'; e.retryAfter = 30;
+    throw e;
+  }
+  if (/^5\d\d/.test(last)) {
+    const e = new Error('AIのサーバーが不安定です。少し待ってからお試しください');
+    e.code = 'GEMINI_BUSY'; e.retryAfter = 20;
+    throw e;
+  }
   fail_('AIの呼び出しに失敗しました（' + last.slice(0, 120) + '）', 'GEMINI');
+}
+
+// 429 応答から「待つ秒数」と「1日の上限かどうか」を読み取る
+function parse429_(txt) {
+  const out = { retrySec: 0, daily: false, what: '' };
+  try {
+    const details = ((JSON.parse(txt) || {}).error || {}).details || [];
+    details.forEach(d => {
+      const t = String(d['@type'] || '');
+      if (/RetryInfo$/.test(t) && d.retryDelay) out.retrySec = Math.ceil(parseFloat(d.retryDelay) || 0);
+      if (/QuotaFailure$/.test(t)) {
+        (d.violations || []).forEach(v => {
+          const id = String(v.quotaId || v.quotaMetric || '');
+          if (/PerDay/i.test(id)) {
+            out.daily = true;
+            out.what = /tts|speech/i.test(id + ' ' + (v.quotaDimensions ? JSON.stringify(v.quotaDimensions) : '')) ? '音声' : '1日あたりの回数';
+          }
+        });
+      }
+    });
+  } catch (e) { /* 形式が違えば既定値 */ }
+  return out;
 }
 
 /* ================= Gemini TTS（朗読） ================= */
@@ -445,17 +499,28 @@ function tts_(req) {
   const pcm = Utilities.base64Decode(audio.inlineData.data);
   const wav = pcmToWav_(pcm, rate, 1, 16);
 
-  let fileUrl = '';
-  if (req.novelId) {
-    const rec = ownNovel_(u, String(req.novelId));
-    const folder = DriveApp.getFolderById(rec.folderId);
-    const audioFolder = subFolder_(folder, 'audio');
-    const name = String(req.fileName || 'audio.wav').replace(/[^\w.\-]/g, '_').slice(0, 60);
-    const old = audioFolder.getFilesByName(name);
-    while (old.hasNext()) old.next().setTrashed(true);
-    fileUrl = audioFolder.createFile(Utilities.newBlob(wav, 'audio/wav', name)).getUrl();
-  }
-  return { audioBase64: Utilities.base64Encode(wav), mimeType: 'audio/wav', fileUrl: fileUrl };
+  return { audioBase64: Utilities.base64Encode(wav), mimeType: 'audio/wav' };
+}
+
+// ブラウザで1章1ファイル（MP3）にまとめた音声を、作品フォルダの audio に保存
+function saveAudio_(req) {
+  const u = session_(req, false);
+  const rec = ownNovel_(u, String(req.novelId || ''));
+  const b64 = String(req.audioBase64 || '');
+  if (!b64) fail_('音声データが空です', 'VALIDATION');
+  if (b64.length > 45 * 1024 * 1024) fail_('音声ファイルが大きすぎます（章を短くするか、MP3の音質を下げてください）', 'VALIDATION');
+  const mime = /^audio\/(mpeg|wav)$/.test(String(req.mimeType || '')) ? req.mimeType : 'audio/mpeg';
+  const ext = mime === 'audio/wav' ? '.wav' : '.mp3';
+  let name = String(req.fileName || 'audio' + ext).replace(/[\\\/:*?"<>|]/g, '_').slice(0, 80);
+  if (!/\.(mp3|wav)$/i.test(name)) name += ext;
+
+  let folder;
+  try { folder = DriveApp.getFolderById(rec.folderId); } catch (e) { fail_('保存先フォルダが見つかりません', 'NOT_FOUND'); }
+  const audioFolder = subFolder_(folder, 'audio');
+  const old = audioFolder.getFilesByName(name);
+  while (old.hasNext()) old.next().setTrashed(true);
+  const file = audioFolder.createFile(Utilities.newBlob(Utilities.base64Decode(b64), mime, name));
+  return { fileUrl: file.getUrl() };
 }
 
 // 16bit PCM(リトルエンディアン) に WAV ヘッダーを付ける
@@ -540,6 +605,7 @@ function saveNovel_(req) {
     upsertFile_(folder, 'state.json', JSON.stringify(n), 'application/json');
     if (ex.text) upsertFile_(folder, 'novel.txt', String(ex.text), MimeType.PLAIN_TEXT);
     if (ex.markdown) upsertFile_(folder, 'novel.md', String(ex.markdown), 'text/markdown');
+    if (ex.html) upsertFile_(folder, 'novel.html', String(ex.html), MimeType.HTML);
     if (ex.plotJson) upsertFile_(folder, 'plot.json', String(ex.plotJson), 'application/json');
     if (ex.earthJson) upsertFile_(folder, 'earth_studio.json', String(ex.earthJson), 'application/json');
     if (ex.kml) upsertFile_(folder, 'earth_studio.kml', String(ex.kml), 'application/vnd.google-earth.kml+xml');

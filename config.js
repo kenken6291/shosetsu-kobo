@@ -5,7 +5,7 @@
  */
 window.APP_CONFIG = {
   APP_NAME: '小説工房',
-  VERSION: 'v1.0.5',
+  VERSION: 'v1.0.6',
   UPDATED: '2026-10-24',
 
   // ▼ GAS Web App の URL（デプロイ → ウェブアプリ のURL）
@@ -41,6 +41,10 @@ window.APP_CONFIG = {
     ratio: 0.07,      // 発声とみなす音量（最大音量に対する割合）
     minLevel: 250
   },
+  // AIが混み合ったとき（429）の自動やり直し
+  BUSY_RETRY_MAX: 6,          // やり直す最大回数
+  BUSY_WAIT_SEC: 20,          // 待つ秒数の基本（回数ごとに延ばす）
+  TTS_SLOW_INTERVAL_SEC: 21,  // 一度混み合ったら、朗読の呼び出しをこの秒数ごとにする
   MP3_KBPS: 64,               // 章ごとのMP3の音質（kbps）
   LAMEJS_URL: 'https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.1/lame.min.js',
   LOCATION_MAX: 10,           // ロケ地の最大抽出数

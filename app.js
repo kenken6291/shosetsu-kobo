@@ -1,5 +1,5 @@
 /**
- * 小説工房 app.js v1.0.4
+ * 小説工房 app.js v1.0.6
  * 会員認証 / 設定UI / プロンプト組み立て / 章ごとの連鎖生成 / 朗読 / ロケ地 / ドライブ保存
  */
 (() => {
@@ -99,6 +99,7 @@
       if (!data.ok) {
         const err = new Error(data.error || '処理に失敗しました');
         err.code = data.code;
+        err.retryAfter = Number(data.retryAfter) || 0;
         if (data.code === 'AUTH') onSessionExpired();
         if (data.code === 'PW_CHANGE_REQUIRED') openPwModal(true);
         throw err;
@@ -118,7 +119,32 @@
   }
 
   function gemini({ system, prompt, json = false, maxTokens = 8192, temperature = 0.9 }) {
-    return api('generate', { system, prompt, json, maxTokens, temperature }, { signal: state.abort?.signal });
+    return withRetry(() => api('generate', { system, prompt, json, maxTokens, temperature }, { signal: state.abort?.signal }));
+  }
+
+  // 中断ボタンで止められる待ち時間（残り秒数を表示）
+  async function waitSec(sec, label) {
+    const signal = state.abort && state.abort.signal;
+    const prev = $('#status-text').textContent;
+    for (let left = Math.ceil(sec); left > 0; left--) {
+      if (signal && signal.aborted) { const e = new Error('中断しました'); e.code = 'ABORT'; throw e; }
+      status(`${label}（あと${left}秒）`);
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    status(prev);
+  }
+
+  // AIが混み合っている（429）ときは、間を空けて自動でやり直す
+  async function withRetry(fn) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        if (err.code !== 'GEMINI_BUSY' || attempt >= C.BUSY_RETRY_MAX) throw err;
+        const wait = Math.min(120, Math.max(err.retryAfter || 0, C.BUSY_WAIT_SEC * (attempt + 1)));
+        await waitSec(wait, `AIが混み合っているので待っています・${attempt + 1}回目`);
+      }
+    }
   }
 
   function parseJsonLoose(text) {
@@ -167,6 +193,7 @@
     $('#auth-screen').hidden = false;
     $('#app').hidden = true;
     $('#btn-logout').hidden = true;
+    $('#btn-pw-change').hidden = true;
     $('#user-name').hidden = true;
   }
 
@@ -174,6 +201,7 @@
     $('#auth-screen').hidden = true;
     $('#app').hidden = false;
     $('#btn-logout').hidden = false;
+    $('#btn-pw-change').hidden = false;
     $('#user-name').hidden = false;
     $('#user-name').textContent = state.user ? `${state.user.username} さん` : '';
     renderAll();
@@ -987,22 +1015,43 @@ ${fullText}`;
 
     const voice = $('#tts-voice').value;
     const toDrive = $('#tts-drive').checked;
+    const sig = JSON.stringify({ idxs, voice, len: jobs.map(j => j.text.length) });
 
-    stopAudio();
-    state.audio.chunks.forEach(c => URL.revokeObjectURL(c.url));
-    state.audio = { chunks: [], index: -1, done: {}, driveUrls: {} };
+    // 前回が途中で止まっていれば、続きから作れるようにする
+    let start = 0;
+    const prevCount = state.audio.chunks.length;
+    if (state.audio.sig === sig && prevCount > 0 && prevCount < jobs.length &&
+      confirm(`前回は ${prevCount}／${jobs.length} 個まで作ってあります。続きから作りますか？\n（キャンセルで最初から作り直します）`)) {
+      start = prevCount;
+    } else {
+      stopAudio();
+      state.audio.chunks.forEach(c => URL.revokeObjectURL(c.url));
+      state.audio = { chunks: [], index: -1, done: {}, driveUrls: {}, sig };
+    }
 
     state.abort = new AbortController();
     setBusy(true, '音声を準備しています…');
+    let lastCall = 0;
     try {
       if (toDrive && !state.novel.novelId) {
         status('音声の保存先を作るため、先に作品をドライブに保存しています…');
         await saveToDrive(true);
       }
-      for (let k = 0; k < jobs.length; k++) {
+      for (let k = start; k < jobs.length; k++) {
         const j = jobs[k];
+        // 混み合いが出たあとは、呼び出しの間隔を空けて上限に当たりにくくする
+        const gap = state.audio.slow ? C.TTS_SLOW_INTERVAL_SEC * 1000 - (Date.now() - lastCall) : 0;
+        if (gap > 0) await waitSec(gap / 1000, `上限に当たらないよう間を空けています（${k + 1}／${jobs.length}）`);
         status(`音声を作っています…（${k + 1}／${jobs.length}）`);
-        const r = await api('tts', { text: j.text, voice }, { signal: state.abort.signal });
+        const r = await withRetry(async () => {
+          try {
+            lastCall = Date.now();
+            return await api('tts', { text: j.text, voice }, { signal: state.abort.signal });
+          } catch (err) {
+            if (err.code === 'GEMINI_BUSY') state.audio.slow = true;
+            throw err;
+          }
+        });
         const pcm = wavToPcm(b64ToBytes(r.audioBase64));
         const samples = trimTail(pcm.samples, pcm.rate);
         const wav = pcmToWav(samples, pcm.rate);
@@ -1018,12 +1067,14 @@ ${fullText}`;
           if (toDrive) await saveChapterToDrive(j.chapter);
         }
         renderPlaylist();
-        if (k === 0) loadChunk(0, false);
+        if (k === 0 || state.audio.index < 0) loadChunk(0, false);
       }
       toast(toDrive ? '音声を作り、章ごとにドライブへ保存しました' : '音声を作りました');
     } catch (err) {
-      if (err.code !== 'ABORT') toast(err.message, true);
-      else if (state.audio.chunks.length) toast(`中断しました（${state.audio.chunks.length}個まで作成済み）`);
+      const n = state.audio.chunks.length;
+      const more = n && n < jobs.length ? `（${n}／${jobs.length}個まで作成済み。もう一度「音声を作る」で続きから作れます）` : '';
+      if (err.code === 'ABORT') toast('中断しました' + more);
+      else toast(err.message + more, true);
     } finally { setBusy(false); renderPlaylist(); }
   }
 
@@ -1571,6 +1622,7 @@ b.onclick=function(){document.body.classList.toggle('v');b.textContent=document.
     $('#guide-close').addEventListener('click', () => $('#guide-modal').close());
     $('#guide-modal').addEventListener('click', e => { if (e.target.id === 'guide-modal') $('#guide-modal').close(); });
     $('#user-name').addEventListener('click', () => openPwModal(false));
+    $('#btn-pw-change').addEventListener('click', () => openPwModal(false));
     $('#user-name').title = 'パスワードを変更する';
     $('#user-name').style.cursor = 'pointer';
 
