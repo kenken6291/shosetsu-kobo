@@ -5,7 +5,7 @@
  */
 window.APP_CONFIG = {
   APP_NAME: '小説工房',
-  VERSION: 'v1.0.4',
+  VERSION: 'v1.0.5',
   UPDATED: '2026-10-24',
 
   // ▼ GAS Web App の URL（デプロイ → ウェブアプリ のURL）
