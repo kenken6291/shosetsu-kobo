@@ -1,6 +1,6 @@
 /**
- * 小説工房 app.js v1.1.0
- * 会員認証 / 設定UI（書き方モード：長編小説／シニアの人生ばなし） / プロンプト組み立て / 章ごとの連鎖生成 / 朗読 / ロケ地 / ドライブ保存
+ * 小説工房 app.js v1.2.0
+ * 会員認証 / 設定UI（書き方モード：長編小説／シニアの人生ばなし／YouTube朗読ドラマ） / プロンプト組み立て / 章ごとの連鎖生成 / 朗読 / ロケ地 / ドライブ保存
  */
 (() => {
   'use strict';
@@ -334,6 +334,10 @@
     fillSelect($('#sel-ending'), C.SENIOR.ENDINGS);
     $$('#choices-mode input[name=mode]').forEach(r => r.addEventListener('change', () => applyModeUI(r.value)));
     $('#sel-senior-theme').addEventListener('change', updateSeniorNote);
+    fillSelect($('#sel-d-genre'), C.DRAMA.GENRES);
+    fillSelect($('#sel-d-view'), C.DRAMA.VIEWS);
+    fillSelect($('#sel-d-narration'), C.DRAMA.NARRATIONS);
+    $('#sel-d-genre').addEventListener('change', updateDramaNote);
     $('#choices-style').innerHTML = C.STYLE_PRESETS.map(p => {
       const m = p.label.match(/^(.*?)（(.*)）$/);
       const name = m ? m[1] : p.label;
@@ -366,6 +370,12 @@
       premisePh: '例：定年した夫が、ある朝から急に毎日お味噌汁を作り始めた。理由を聞いても笑ってごまかす。やがて、四十年前の新婚の頃に交わした約束が関わっていると分かる。',
       protagonistPh: '例：72歳の女性。元小学校の給食調理員。夫と二人暮らし、娘は嫁いで大阪',
       notesPh: '例：舞台は東京の下町。孫を登場させたい。最後は少し笑えるように。'
+    },
+    drama: {
+      head: 'どんな朗読ドラマを書くか', premise: 'お話のもと（一言でも可）', protagonist: '主人公（任意）',
+      premisePh: '例：結婚して三年、義母は毎週末やって来ては私の料理にけちをつける。ある日、親戚の集まりで「嫁の手料理」を出せと言われた。',
+      protagonistPh: '例：32歳の女性、パートの事務員。夫は母親に頭が上がらない',
+      notesPh: '例：最後に夫も反省する展開に。後日談を入れてほしい。'
     }
   };
 
@@ -375,7 +385,7 @@
   }
 
   function applyModeUI(mode) {
-    mode = mode === 'senior' ? 'senior' : 'novel';
+    mode = MODE_TEXT[mode] ? mode : 'novel';
     $$('#form-settings .mode-block').forEach(b => { b.hidden = b.dataset.mode !== mode; });
     const t = MODE_TEXT[mode];
     const f = $('#form-settings');
@@ -386,6 +396,12 @@
     f.protagonist.placeholder = t.protagonistPh;
     f.notes.placeholder = t.notesPh;
     updateSeniorNote();
+    updateDramaNote();
+  }
+
+  function updateDramaNote() {
+    const g = C.DRAMA.GENRES.find(p => p.id === $('#sel-d-genre').value);
+    $('#d-genre-note').textContent = g ? g.prompt : '';
   }
 
   function updateSeniorNote() {
@@ -409,6 +425,8 @@
       narrator: f.narrator.value, seniorTheme: f.seniorTheme.value,
       narration: f.narration.value, ending: f.ending.value,
       hook: f.hook.checked, closing: f.closing.checked,
+      dGenre: f.dGenre.value, dView: f.dView.value, dNarration: f.dNarration.value,
+      dEra: f.dEra.value.trim(), dHook: f.dHook.checked, dClosing: f.dClosing.checked,
       style: (f.querySelector('input[name=style]:checked') || {}).value || C.DEFAULTS.style,
       era: f.era.value, tone: f.tone.value, focus: f.focus.value,
       chapters: num(f.chapters.value, C.DEFAULTS.chapters),
@@ -436,6 +454,12 @@
     if (!f.narration.value) f.narration.selectedIndex = 0;
     if (!f.ending.value) f.ending.selectedIndex = 0;
     f.hook.checked = s.hook !== false; f.closing.checked = s.closing !== false;
+    f.dGenre.value = s.dGenre; f.dView.value = s.dView; f.dNarration.value = s.dNarration;
+    if (!f.dGenre.value) f.dGenre.selectedIndex = 0;
+    if (!f.dView.value) f.dView.selectedIndex = 0;
+    if (!f.dNarration.value) f.dNarration.selectedIndex = 0;
+    f.dEra.value = s.dEra || '';
+    f.dHook.checked = s.dHook !== false; f.dClosing.checked = s.dClosing !== false;
     updateEraNote();
     applyModeUI(mr.value);
   }
@@ -444,9 +468,11 @@
   const pick = (list, id) => list.find(p => p.id === id) || list[0];
 
   const isSenior = s => !!s && s.mode === 'senior';
+  const isDrama = s => !!s && s.mode === 'drama';
 
   function buildSystemPrompt(s) {
     if (isSenior(s)) return buildSeniorSystemPrompt(s);
+    if (isDrama(s)) return buildDramaSystemPrompt(s);
     const st = pick(C.STYLE_PRESETS, s.style);
     const era = pick(C.ERA_PRESETS, s.era);
     const tone = pick(C.TONE_PRESETS, s.tone);
@@ -583,8 +609,130 @@ ${summaries}
 ${rules.map(r => '- ' + r).join('\n')}`;
   }
 
+  /* ---- YouTube朗読ドラマモード ---- */
+  function dramaParts(s) {
+    const D = C.DRAMA;
+    return { g: pick(D.GENRES, s.dGenre), view: pick(D.VIEWS, s.dView), voice: pick(D.NARRATIONS, s.dNarration) };
+  }
+
+  function buildDramaSystemPrompt(s) {
+    const { g, view, voice } = dramaParts(s);
+    return [
+      `あなたは、YouTubeの朗読チャンネルで多くの人に聞かれている「${g.label}」の物語を書く、日本語の熟練した書き手です。聞き手は家事や作業をしながら、あるいは寝る前に耳で物語を聞いています。最後まで聞きたくなる展開と、聞き終えたときの満足感を大切にしてください。`,
+      `【ジャンル：${g.label}】\n${g.prompt}`,
+      `【守ること】\n${g.cautions}`,
+      `【語りの形：${view.label}】\n${view.prompt}`,
+      `【語り口：${voice.label}】\n${voice.prompt}`,
+      s.dEra ? `【時代背景】\n${s.dEra}。この時代に存在しない物・言葉・価値観を持ち込まないこと。` : '',
+      `【書き方】\n- ${C.DRAMA.BASE_PROMPT}`,
+      '【共通ルール】\n- 実話であると偽らない（「これは実話です」などと書かない）。\n- 特定の実在の個人・企業を悪く描かない（歴史上の人物を史実に沿って描くのは可）。\n- あらすじ的な要約で済ませず、場面として描く。\n- 指示された形式以外（前置き、解説、あとがき、注釈）は出力しない。'
+    ].filter(Boolean).join('\n\n');
+  }
+
+  function buildDramaPlotPrompt(s) {
+    const { g, view } = dramaParts(s);
+    return `次の条件で、朗読向けの「${g.label}」の物語の全体構成と章立てを作ってください。
+
+【題名】${s.title || '（未定。内容にふさわしい、短く印象に残る題名を付けること）'}
+【お話のもと】${s.premise}
+【ジャンル】${g.label}
+【語りの形】${view.label}
+【主人公】${s.protagonist || '（おまかせ）'}
+【時代背景】${s.dEra || '（お話に合わせて決める。指定がなければ現代）'}
+【舞台となる土地】${s.place || '（お話に合う実在の土地を選ぶこと）'}
+【章数】${s.chapters}章
+【1章の分量】約${s.charsPerChapter}字
+【その他の希望】${s.notes || 'なし'}
+
+このジャンルの構成の型（章数に合わせて割り振る）：
+${g.structure.split('／').map(x => '- ' + x).join('\n')}
+${s.dHook ? '- 第1章の冒頭は、山場や結末を少しだけ明かす「つかみ」の一文から始める。\n' : ''}${s.dClosing ? '- 最終章の最後は、聞き手へのひとことの語りかけで締める。\n' : ''}
+条件：
+- chapters はちょうど ${s.chapters} 件。phase は「起」「承」「転」「結」のいずれか。
+- characters の1人目は主人公。description に年齢・立場・性格・抱えている事情を書く。対立する人物や鍵になる人物も入れる。
+- 各章の synopsis は200〜300字で、その章で起きる出来事と人物の感情の動きを具体的に書く。
+- 伏線は前半の章に置き、山場で回収する。
+- locations には実在の地名・駅・建物などを書く（架空の店や家はその所在地の実在地名を添える）。
+- youtube には、この話を朗読動画にするときの文案を付ける。
+  - title：50〜70字。「${g.tag}」の見出しを付け、山場をほのめかして続きを聞きたくさせる。ネタばらしはしない。
+  - thumbnail：サムネイルに大きく載せる短い言葉を2〜3行（各12字以内）。
+  - description：概要欄の紹介文を150〜250字。${g.id === 'rekishi' ? '史実をもとに一部を創作で補った物語であると一言添える。' : '「創作の物語です」と一言添える。'}
+
+次のJSONだけを出力してください。
+{
+  "title": "題名",
+  "logline": "物語を一文で",
+  "theme": "主題",
+  "setting": "舞台と時代の具体的な説明",
+  "characters": [{"name": "名前", "role": "主人公", "description": "年齢・立場・性格・事情"}],
+  "chapters": [{"no": 1, "title": "章題", "phase": "起", "synopsis": "200〜300字", "keyScenes": ["場面1", "場面2"], "locations": ["地名"], "endingHook": "章の終わり方"}],
+  "youtube": {"title": "動画タイトル", "thumbnail": ["1行目", "2行目"], "description": "概要欄"}
+}`;
+  }
+
+  function buildDramaChapterPrompt(s, plot, idx) {
+    const { g, view } = dramaParts(s);
+    const ch = plot.chapters[idx];
+    const total = plot.chapters.length;
+    const prev = state.novel.chapters.slice(0, idx);
+    const outline = plot.chapters.map((c, i) => `第${i + 1}章「${c.title}」（${c.phase}）${i === idx ? ' ← 今回' : ''}`).join('\n');
+    const summaries = prev.map((c, i) => `第${i + 1}章「${plot.chapters[i].title}」：${c && c.summary ? c.summary : '（要約なし）'}`).join('\n');
+    const lastText = idx > 0 && prev[idx - 1] && prev[idx - 1].text ? prev[idx - 1].text.slice(-C.CONTEXT_TAIL_CHARS) : '';
+    const target = s.charsPerChapter;
+    const isFirst = idx === 0;
+    const isLast = idx === total - 1;
+    const rules = [
+      `分量は約${target}字（少なくとも${Math.round(target * 0.8)}字）。場面を省略せず、会話と心の動きを丁寧に描く。`,
+      '章題や見出しは書かず、本文だけを出力する。',
+      '段落の頭は全角スペースで一字下げ。会話は「」で書く。段落の間に空行は入れない。',
+      '「＊」などの記号や区切り線は使わない。時間や場面の切り替えは言葉で示す（例：「それから一週間ほど経った夜のことです。」）。',
+      `語りの形は「${view.label}」を最後まで守る。`
+    ];
+    if (isFirst) {
+      rules.push(s.dHook
+        ? '冒頭は、この物語の山場や結末を少しだけ明かす「つかみ」の一文から始め、そのあと主人公と状況の紹介へ自然に入る。'
+        : '主人公と状況の紹介を、場面の中で自然に織り込みながら始める。');
+    }
+    if (isLast) {
+      rules.push(`最終章として物語を締めくくる。伏線を回収し、${g.id === 'kaidan' ? '最後にぞっとする余韻を残す' : g.id === 'sukatto' || g.id === 'shuraba' ? '聞き手が胸のすく決着と後日談を描く' : '聞き手の胸に残る余韻を描く'}。説教にはしない。`);
+      if (s.dClosing) rules.push('最後の段落で、聞いている人へ短く語りかけて終える。チャンネル登録や高評価のお願いは書かない。');
+    } else {
+      rules.push('章の最後は、次が気になる一言で終える。物語を完結させない。');
+    }
+
+    return `朗読向けの「${g.label}」の物語『${plot.title}』の第${idx + 1}章（全${total}章）の本文を書いてください。
+
+■ 物語の概要
+${plot.logline}
+主題：${plot.theme || ''}
+舞台：${plot.setting || ''}
+
+■ 登場人物（1人目が主人公）
+${charactersText(plot)}
+
+■ 全体の章立て
+${outline}
+
+${idx > 0 ? `■ これまでの章の要約（この内容と矛盾させないこと）
+${summaries}
+
+■ 直前の本文（この続きとして自然につながるように書き出すこと。この部分は繰り返さない）
+……${lastText}
+` : ''}
+■ 今回書く章
+第${idx + 1}章「${ch.title}」（${ch.phase}）
+あらすじ：${ch.synopsis}
+入れる場面：${(ch.keyScenes || []).join('／')}
+主な舞台：${(ch.locations || []).join('、')}
+章の終わり方：${ch.endingHook || ''}
+
+■ 書き方
+${rules.map(r => '- ' + r).join('\n')}`;
+  }
+
   function buildPlotPrompt(s) {
     if (isSenior(s)) return buildSeniorPlotPrompt(s);
+    if (isDrama(s)) return buildDramaPlotPrompt(s);
     return `次の条件で、長編小説の全体プロットと章立てを作ってください。
 
 【題名】${s.title || '（未定。物語にふさわしい題名を付けること）'}
@@ -618,6 +766,7 @@ ${rules.map(r => '- ' + r).join('\n')}`;
 
   function buildChapterPrompt(s, plot, idx) {
     if (isSenior(s)) return buildSeniorChapterPrompt(s, plot, idx);
+    if (isDrama(s)) return buildDramaChapterPrompt(s, plot, idx);
     const ch = plot.chapters[idx];
     const total = plot.chapters.length;
     const prev = state.novel.chapters.slice(0, idx);
@@ -860,7 +1009,7 @@ ${fullText}`;
       r = await gemini({ system: buildSystemPrompt(s), prompt: buildContinuePrompt(plot, idx, text), maxTokens, temperature: 0.9 });
       text += '\n' + cleanChapter(r.text);
     }
-    if (isSenior(s)) text = text.split('\n').filter(l => !/^[\s　＊*※☆★◇◆―─－\-]+$/.test(l)).join('\n');
+    if (isSenior(s) || isDrama(s)) text = text.split('\n').filter(l => !/^[\s　＊*※☆★◇◆―─－\-]+$/.test(l)).join('\n');
     if (!text.trim()) throw new Error(`第${idx + 1}章の本文が空でした。もう一度お試しください`);
 
     state.novel.chapters[idx] = { title: plot.chapters[idx].title, text, summary: '' };

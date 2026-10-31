@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@400;600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=1.1.0">
+  <link rel="stylesheet" href="style.css?v=1.2.0">
   <script>
     // テーマのちらつき防止
     try { const t = localStorage.getItem('skb_theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
@@ -151,6 +151,11 @@
       </section>
 
       <section>
+        <h3>YouTube朗読ドラマモード</h3>
+        <p>「スカッと・因果応報」「感動・人情・家族」「怖い話・怪談」「歴史・偉人・昔話」「修羅場・どんでん返し」から選んで、YouTubeの朗読動画のような物語を書くモードです。ジャンルごとに、起承転結の山場の置き方を変えています。「語りの形」で、主人公が「私」と語る体験談か、ナレーターが語る三人称かを選べます。歴史ものは「時代背景」に時代を入れると正確になります。構成には動画タイトル・サムネイルの文字・概要欄の文案も付きます。</p>
+      </section>
+
+      <section>
         <h3>知っておくと便利なこと</h3>
         <ul class="guide-tips">
           <li>本文画面の「縦書き」で文庫本のように縦組みで読めます。「小」「大」で文字の大きさを変えられます。</li>
@@ -217,6 +222,21 @@
           </div>
           <label class="check"><input type="checkbox" name="hook"> 冒頭で結末を少しだけ明かして、続きを聞きたくさせる（つかみ）</label>
           <label class="check"><input type="checkbox" name="closing"> 最後に聞いている人へひとこと語りかけて締める</label>
+        </div>
+
+        <div class="mode-block" data-mode="drama" hidden>
+          <p class="mode-lead">YouTubeの朗読動画でよく聞かれる型の物語を、耳で聞いて分かる語りで書きます。ジャンルごとに、山場の置き方や章の組み立てが変わります。</p>
+          <div class="grid-2">
+            <label class="field"><span>ジャンル</span><select name="dGenre" id="sel-d-genre"></select></label>
+            <label class="field"><span>語りの形</span><select name="dView" id="sel-d-view"></select></label>
+          </div>
+          <p class="preset-note" id="d-genre-note"></p>
+          <div class="grid-2">
+            <label class="field"><span>語り口</span><select name="dNarration" id="sel-d-narration"></select></label>
+            <label class="field"><span>時代背景（任意）</span><input type="text" name="dEra" maxlength="60" placeholder="例：現代、昭和50年代、戦国時代"></label>
+          </div>
+          <label class="check"><input type="checkbox" name="dHook"> 冒頭で山場を少しだけ明かして、続きを聞きたくさせる（つかみ）</label>
+          <label class="check"><input type="checkbox" name="dClosing"> 最後に聞いている人へひとこと語りかけて締める</label>
         </div>
 
         <div class="mode-block" data-mode="novel">
@@ -400,7 +420,7 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
-  <script src="config.js?v=1.1.0"></script>
-  <script src="app.js?v=1.1.0"></script>
+  <script src="config.js?v=1.2.0"></script>
+  <script src="app.js?v=1.2.0"></script>
 </body>
 </html>
