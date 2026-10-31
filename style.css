@@ -209,6 +209,14 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); outline
 .choice:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .preset-note { font-size: 13px; color: var(--muted); margin: -6px 0 14px; }
 
+/* 書き方モード（v1.1.0） */
+.mode-list { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.mode-block { margin: 0 0 4px; }
+.mode-block[data-mode="senior"] { border-left: 3px solid var(--accent); padding: 4px 0 2px 14px; margin-bottom: 14px; }
+.mode-lead { font-size: 13.5px; color: var(--muted); line-height: 1.7; margin: 0 0 12px; }
+.yt-box { border: 1px solid var(--rule); border-radius: 8px; padding: 12px 14px 4px; margin: 0 0 16px; background: var(--paper); }
+.yt-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--muted); margin: 0 0 8px; }
+
 /* 構成 */
 .chapter-plan { list-style: none; padding: 0; margin: 4px 0 12px; counter-reset: ch; }
 .chapter-plan > li {

@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@400;600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=1.1.0">
   <script>
     // テーマのちらつき防止
     try { const t = localStorage.getItem('skb_theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
@@ -119,7 +119,7 @@
         <ol class="guide-steps">
           <li>
             <strong>設定</strong>
-            <p>物語の核になるあらすじ案を書き、文体・時代背景・トーン・描写の切り口・章数・1章の分量を選びます。題名と舞台は空欄でも構いません。「構成を作る」を押すと、30秒〜1分ほどで章立てができます。</p>
+            <p>まず「書き方モード」を選びます（下の「シニアの人生ばなしモード」も参照）。物語の核になるあらすじ案を書き、文体・時代背景・トーン・描写の切り口・章数・1章の分量を選びます。題名と舞台は空欄でも構いません。「構成を作る」を押すと、30秒〜1分ほどで章立てができます。</p>
           </li>
           <li>
             <strong>構成</strong>
@@ -142,6 +142,12 @@
             <p>「Googleドライブに保存」で、本文（txt・md・読書用html）、構成、ロケ地データを作品ごとのフォルダにまとめて保存します。保存した作品は「保存した作品」の一覧から「開く」で続きを書けます。</p>
           </li>
         </ol>
+      </section>
+
+      <section>
+        <h3>シニアの人生ばなしモード</h3>
+        <p>YouTubeの朗読チャンネルのような、60〜80代の「私」が自分の人生を語って聞かせる物語を書くモードです。いまの老後の出来事を軸に、昭和の思い出を回想として行き来します。耳で聞いて分かるよう、短めの文・やさしい言葉・漢数字で書き、記号や見出しは使いません。</p>
+        <p>設定画面で「シニアの人生ばなし（朗読向け）」を選ぶと、文体・時代・トーンの代わりに「語り手」「テーマ」「語り口」「結末」を選べます。あらすじ案は「定年した夫が急に料理を始めた」のような一言でも大丈夫です。構成には動画タイトル・サムネイルの文字・概要欄の文案も付くので、そのまま書き換えて使えます。朗読の声は落ち着いた Charon や Kore が合います。</p>
       </section>
 
       <section>
@@ -185,15 +191,35 @@
         <p>題名は空欄でも構いません。構成を作るときに付けます。</p>
       </header>
       <form id="form-settings" class="settings">
+        <fieldset class="preset">
+          <legend>書き方モード</legend>
+          <div class="choice-list mode-list" id="choices-mode"></div>
+        </fieldset>
         <div class="grid-2">
           <label class="field"><span>題名（任意）</span><input type="text" name="title" maxlength="60"></label>
           <label class="field"><span>舞台となる土地（任意）</span><input type="text" name="place" maxlength="80" placeholder="例：横浜・本牧、尾道の坂の町"></label>
         </div>
-        <label class="field"><span>物語の核・あらすじ案</span>
+        <label class="field"><span id="lbl-premise">物語の核・あらすじ案</span>
           <textarea name="premise" rows="4" maxlength="2000" required placeholder="例：港町の古い質屋に、三十年前に質入れされた拳銃を受け出しに来た老人。店主の娘はその拳銃が父の死に関わっていると知る。"></textarea></label>
-        <label class="field"><span>主人公（任意）</span>
+        <label class="field"><span id="lbl-protagonist">主人公（任意）</span>
           <input type="text" name="protagonist" maxlength="200" placeholder="例：元刑事の探偵、52歳。左膝に古傷"></label>
 
+        <div class="mode-block" data-mode="senior" hidden>
+          <p class="mode-lead">60〜80代の「私」が、聞いている人に自分の人生を打ち明けるように語ります。いまの暮らしの出来事を軸に、昭和の思い出を行き来する、朗読で聞きやすい文章で書きます。</p>
+          <div class="grid-2">
+            <label class="field"><span>語り手</span><select name="narrator" id="sel-narrator"></select></label>
+            <label class="field"><span>テーマ</span><select name="seniorTheme" id="sel-senior-theme"></select></label>
+          </div>
+          <p class="preset-note" id="senior-theme-note"></p>
+          <div class="grid-2">
+            <label class="field"><span>語り口</span><select name="narration" id="sel-narration"></select></label>
+            <label class="field"><span>結末</span><select name="ending" id="sel-ending"></select></label>
+          </div>
+          <label class="check"><input type="checkbox" name="hook"> 冒頭で結末を少しだけ明かして、続きを聞きたくさせる（つかみ）</label>
+          <label class="check"><input type="checkbox" name="closing"> 最後に聞いている人へひとこと語りかけて締める</label>
+        </div>
+
+        <div class="mode-block" data-mode="novel">
         <fieldset class="preset">
           <legend>文体・作風</legend>
           <div class="choice-list" id="choices-style"></div>
@@ -204,6 +230,7 @@
           <label class="field"><span>描写の切り口</span><select name="focus" id="sel-focus"></select></label>
         </div>
         <p class="preset-note" id="era-note"></p>
+        </div>
         <div class="grid-2">
           <label class="field"><span>章数</span><select name="chapters" id="sel-chapters"></select></label>
           <label class="field"><span>1章の分量</span><select name="charsPerChapter" id="sel-length"></select></label>
@@ -229,6 +256,12 @@
         <label class="field"><span>一文の要約</span><textarea id="plot-logline" rows="2"></textarea></label>
         <label class="field"><span>舞台と時代</span><textarea id="plot-setting" rows="3"></textarea></label>
         <label class="field"><span>登場人物（1行に1人：名前｜役割｜説明）</span><textarea id="plot-characters" rows="5"></textarea></label>
+        <div class="yt-box" id="plot-youtube" hidden>
+          <p class="yt-head">YouTube用の文案 <button type="button" class="btn ghost small" id="btn-copy-yt">まとめてコピー</button></p>
+          <label class="field"><span>動画タイトル</span><input type="text" id="yt-title" maxlength="100"></label>
+          <label class="field"><span>サムネイルの文字（1行ずつ）</span><textarea id="yt-thumb" rows="2"></textarea></label>
+          <label class="field"><span>概要欄</span><textarea id="yt-desc" rows="4"></textarea></label>
+        </div>
         <ol class="chapter-plan" id="plot-chapters"></ol>
         <div class="actions">
           <button type="button" class="btn primary" id="btn-to-write">本文を書く</button>
@@ -367,7 +400,7 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
-  <script src="config.js"></script>
-  <script src="app.js"></script>
+  <script src="config.js?v=1.1.0"></script>
+  <script src="app.js?v=1.1.0"></script>
 </body>
 </html>

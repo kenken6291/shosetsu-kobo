@@ -1,6 +1,6 @@
 /**
- * 小説工房 app.js v1.0.6
- * 会員認証 / 設定UI / プロンプト組み立て / 章ごとの連鎖生成 / 朗読 / ロケ地 / ドライブ保存
+ * 小説工房 app.js v1.1.0
+ * 会員認証 / 設定UI（書き方モード：長編小説／シニアの人生ばなし） / プロンプト組み立て / 章ごとの連鎖生成 / 朗読 / ロケ地 / ドライブ保存
  */
 (() => {
   'use strict';
@@ -326,6 +326,14 @@
   }
 
   function initSettingsForm() {
+    $('#choices-mode').innerHTML = C.MODES.map(m => `<label class="choice"><input type="radio" name="mode" value="${esc(m.id)}">
+        <span class="choice-name">${esc(m.label)}</span><span class="choice-desc">${esc(m.desc)}</span></label>`).join('');
+    fillSelect($('#sel-narrator'), C.SENIOR.NARRATORS);
+    fillSelect($('#sel-senior-theme'), C.SENIOR.THEMES);
+    fillSelect($('#sel-narration'), C.SENIOR.NARRATIONS);
+    fillSelect($('#sel-ending'), C.SENIOR.ENDINGS);
+    $$('#choices-mode input[name=mode]').forEach(r => r.addEventListener('change', () => applyModeUI(r.value)));
+    $('#sel-senior-theme').addEventListener('change', updateSeniorNote);
     $('#choices-style').innerHTML = C.STYLE_PRESETS.map(p => {
       const m = p.label.match(/^(.*?)（(.*)）$/);
       const name = m ? m[1] : p.label;
@@ -345,6 +353,46 @@
     writeSettings(Object.assign({}, C.DEFAULTS));
   }
 
+  // モードごとの入力欄の出し分け
+  const MODE_TEXT = {
+    novel: {
+      head: 'どんな小説を書くか', premise: '物語の核・あらすじ案', protagonist: '主人公（任意）',
+      premisePh: '例：港町の古い質屋に、三十年前に質入れされた拳銃を受け出しに来た老人。店主の娘はその拳銃が父の死に関わっていると知る。',
+      protagonistPh: '例：元刑事の探偵、52歳。左膝に古傷',
+      notesPh: '例：結末は救いのある形に。暴力描写は控えめに。'
+    },
+    senior: {
+      head: 'どんな人生ばなしを語るか', premise: 'お話のもと（一言でも可）', protagonist: '語り手のくわしい設定（任意）',
+      premisePh: '例：定年した夫が、ある朝から急に毎日お味噌汁を作り始めた。理由を聞いても笑ってごまかす。やがて、四十年前の新婚の頃に交わした約束が関わっていると分かる。',
+      protagonistPh: '例：72歳の女性。元小学校の給食調理員。夫と二人暮らし、娘は嫁いで大阪',
+      notesPh: '例：舞台は東京の下町。孫を登場させたい。最後は少し笑えるように。'
+    }
+  };
+
+  function currentMode() {
+    const r = $('#form-settings').querySelector('input[name=mode]:checked');
+    return r ? r.value : 'novel';
+  }
+
+  function applyModeUI(mode) {
+    mode = mode === 'senior' ? 'senior' : 'novel';
+    $$('#form-settings .mode-block').forEach(b => { b.hidden = b.dataset.mode !== mode; });
+    const t = MODE_TEXT[mode];
+    const f = $('#form-settings');
+    $('#panel-settings .panel-head h2').textContent = t.head;
+    $('#lbl-premise').textContent = t.premise;
+    $('#lbl-protagonist').textContent = t.protagonist;
+    f.premise.placeholder = t.premisePh;
+    f.protagonist.placeholder = t.protagonistPh;
+    f.notes.placeholder = t.notesPh;
+    updateSeniorNote();
+  }
+
+  function updateSeniorNote() {
+    const th = C.SENIOR.THEMES.find(p => p.id === $('#sel-senior-theme').value);
+    $('#senior-theme-note').textContent = th ? th.prompt : '';
+  }
+
   function updateEraNote() {
     const era = C.ERA_PRESETS.find(p => p.id === $('#sel-era').value);
     $('#era-note').textContent = era ? era.prompt : '';
@@ -357,6 +405,10 @@
       place: f.place.value.trim(),
       premise: f.premise.value.trim(),
       protagonist: f.protagonist.value.trim(),
+      mode: currentMode(),
+      narrator: f.narrator.value, seniorTheme: f.seniorTheme.value,
+      narration: f.narration.value, ending: f.ending.value,
+      hook: f.hook.checked, closing: f.closing.checked,
       style: (f.querySelector('input[name=style]:checked') || {}).value || C.DEFAULTS.style,
       era: f.era.value, tone: f.tone.value, focus: f.focus.value,
       chapters: num(f.chapters.value, C.DEFAULTS.chapters),
@@ -375,13 +427,26 @@
     radio.checked = true;
     f.era.value = s.era; f.tone.value = s.tone; f.focus.value = s.focus;
     f.chapters.value = String(s.chapters); f.charsPerChapter.value = String(s.charsPerChapter);
+    const mr = f.querySelector(`input[name=mode][value="${s.mode}"]`) || f.querySelector('input[name=mode]');
+    mr.checked = true;
+    f.narrator.value = s.narrator; f.seniorTheme.value = s.seniorTheme;
+    f.narration.value = s.narration; f.ending.value = s.ending;
+    if (!f.narrator.value) f.narrator.selectedIndex = 0;
+    if (!f.seniorTheme.value) f.seniorTheme.selectedIndex = 0;
+    if (!f.narration.value) f.narration.selectedIndex = 0;
+    if (!f.ending.value) f.ending.selectedIndex = 0;
+    f.hook.checked = s.hook !== false; f.closing.checked = s.closing !== false;
     updateEraNote();
+    applyModeUI(mr.value);
   }
 
   /* ================= プロンプト組み立て ================= */
   const pick = (list, id) => list.find(p => p.id === id) || list[0];
 
+  const isSenior = s => !!s && s.mode === 'senior';
+
   function buildSystemPrompt(s) {
+    if (isSenior(s)) return buildSeniorSystemPrompt(s);
     const st = pick(C.STYLE_PRESETS, s.style);
     const era = pick(C.ERA_PRESETS, s.era);
     const tone = pick(C.TONE_PRESETS, s.tone);
@@ -396,7 +461,130 @@
     ].join('\n\n');
   }
 
+  /* ---- シニアの人生ばなしモード ---- */
+  function seniorParts(s) {
+    const S = C.SENIOR;
+    return {
+      nar: pick(S.NARRATORS, s.narrator),
+      theme: pick(S.THEMES, s.seniorTheme),
+      voice: pick(S.NARRATIONS, s.narration),
+      end: pick(S.ENDINGS, s.ending)
+    };
+  }
+
+  function buildSeniorSystemPrompt(s) {
+    const { nar, theme, voice, end } = seniorParts(s);
+    return [
+      'あなたは、YouTubeの朗読チャンネルで長く聞かれている「シニアの人生ばなし」を書く、日本語の熟練した書き手です。60〜80代の語り手が、自分の人生に起きた出来事を聞き手に語って聞かせる物語を書きます。聞き手は同世代のシニアで、家事をしながら、あるいは寝る前に耳で聞いています。',
+      `【語り手】\n${nar.prompt}`,
+      `【テーマ】${theme.label}\n${theme.prompt}`,
+      `【語り口：${voice.label}】\n${voice.prompt}`,
+      `【結末の方向：${end.label}】\n${end.prompt}`,
+      `【書き方】\n- ${C.SENIOR.BASE_PROMPT}`,
+      '【共通ルール】\n- 時代考証を守る。語り手の生まれ年から逆算し、その年代に実際にあった物・出来事・物価・言葉遣いだけを使う。\n- 実話であると偽らない（「これは実話です」などと書かない）。\n- 特定の実在人物・企業を悪く描かない。\n- あらすじ的な要約で済ませず、場面として描く。同じ言い回しを繰り返さない。\n- 指示された形式以外（前置き、解説、あとがき、注釈）は出力しない。'
+    ].join('\n\n');
+  }
+
+  function buildSeniorPlotPrompt(s) {
+    const { theme } = seniorParts(s);
+    return `次の条件で、朗読向けの「シニアの人生ばなし」の全体構成と章立てを作ってください。
+
+【題名】${s.title || '（未定。内容にふさわしい、短く印象に残る題名を付けること）'}
+【お話のもと】${s.premise}
+【テーマ】${theme.label}
+【語り手のくわしい設定】${s.protagonist || '（おまかせ）'}
+【舞台となる土地】${s.place || '（語り手の人生に合う実在の土地を選ぶこと。回想の舞台と現在の住まいが違ってもよい）'}
+【章数】${s.chapters}章
+【1章の分量】約${s.charsPerChapter}字
+【その他の希望】${s.notes || 'なし'}
+
+構成の型（章数に合わせて割り振る）：
+- 起：語り手の「いま」の暮らしと、心に引っかかる出来事の始まり。${s.hook ? '第1章の冒頭は、物語の山場や結末を少しだけ明かす「つかみ」の一文から始める（例：「あの日、夫が台所に立っていた理由を知ったとき、私は声を上げて泣きました」）。' : ''}
+- 承：出来事が広がる中で、昭和の思い出（出会い、若い日の苦労、言えなかった言葉）が回想として差し込まれる。
+- 転：隠れていた事実・本当の気持ちが明らかになる山場。過去と現在がつながる。
+- 結：受け止め、和解や再出発。語り手が今になって分かったことを静かに語る。${s.closing ? '最後に聞き手へのひとことの語りかけで締める。' : ''}
+
+条件：
+- chapters はちょうど ${s.chapters} 件。phase は「起」「承」「転」「結」のいずれか。
+- characters の1人目は語り手（name は語り手の名前、role は「語り手（私）」）。description に生まれ年（昭和何年）・現在の年齢・家族構成・これまでの仕事を必ず書く。
+- 各章の synopsis は200〜300字で、「いま」の出来事と、差し込む昭和の回想（何年頃の、どんな場面か）の両方を書く。
+- 伏線（古い手紙、形見、口癖、写真など）は前半の章に置き、後半で回収する。
+- locations には実在の地名・駅・商店街・団地などを書く。
+- youtube には、この話を朗読動画にするときの文案を付ける。
+  - title：50〜70字。「【感動する話】」「【朗読】」のような【】の見出しを1つ付け、結末をほのめかして続きを聞きたくさせる。ネタばらしはしない。
+  - thumbnail：サムネイルに大きく載せる短い言葉を2〜3行（各12字以内）。
+  - description：概要欄の紹介文を150〜250字。「創作の物語です」と一言添える。
+
+次のJSONだけを出力してください。
+{
+  "title": "題名",
+  "logline": "物語を一文で",
+  "theme": "主題",
+  "setting": "現在の暮らしの舞台と、回想の舞台・年代の具体的な説明",
+  "characters": [{"name": "名前", "role": "語り手（私）", "description": "生まれ年・年齢・家族・仕事・口癖・心残り"}],
+  "chapters": [{"no": 1, "title": "章題", "phase": "起", "synopsis": "200〜300字", "keyScenes": ["場面1", "場面2"], "locations": ["地名"], "endingHook": "章の終わり方"}],
+  "youtube": {"title": "動画タイトル", "thumbnail": ["1行目", "2行目"], "description": "概要欄"}
+}`;
+  }
+
+  function buildSeniorChapterPrompt(s, plot, idx) {
+    const ch = plot.chapters[idx];
+    const total = plot.chapters.length;
+    const prev = state.novel.chapters.slice(0, idx);
+    const outline = plot.chapters.map((c, i) => `第${i + 1}章「${c.title}」（${c.phase}）${i === idx ? ' ← 今回' : ''}`).join('\n');
+    const summaries = prev.map((c, i) => `第${i + 1}章「${plot.chapters[i].title}」：${c && c.summary ? c.summary : '（要約なし）'}`).join('\n');
+    const lastText = idx > 0 && prev[idx - 1] && prev[idx - 1].text ? prev[idx - 1].text.slice(-C.CONTEXT_TAIL_CHARS) : '';
+    const target = s.charsPerChapter;
+    const isFirst = idx === 0;
+    const isLast = idx === total - 1;
+    const rules = [
+      `分量は約${target}字（少なくとも${Math.round(target * 0.8)}字）。場面を省略せず、会話と心の動きを丁寧に語る。`,
+      '章題や見出しは書かず、本文だけを出力する。',
+      '段落の頭は全角スペースで一字下げ。会話は「」で書く。段落の間に空行は入れない。',
+      '「＊」などの記号や区切り線は使わない。時間や場面の切り替えは言葉で示す（例：「話は、昭和四十五年の春にさかのぼります。」「それから三日ほど経った朝のことです。」）。',
+      '一文は長くしすぎず、耳で聞いて意味が取れる言葉を選ぶ。人物は名前と続柄で分かるように呼ぶ。'
+    ];
+    if (isFirst && s.hook) rules.push('冒頭は、この物語の山場や結末を少しだけ明かす「つかみ」の一文から始め、そのあと「少し長くなりますが、聞いてください」のように語りへ入る。続けて語り手の自己紹介（年齢、家族、いまの暮らし）を自然に織り込む。');
+    else if (isFirst) rules.push('語り手の自己紹介（年齢、家族、いまの暮らし）を自然に織り込みながら語り始める。');
+    if (isLast) {
+      rules.push('最終章として物語を締めくくる。伏線を回収し、語り手が今になって分かったことを実感として語る。説教にはしない。');
+      if (s.closing) rules.push('最後の段落で、聞いている人へ短く語りかけて終える（例：「皆さんの家にも、言いそびれたままの『ありがとう』はありませんか」）。チャンネル登録や高評価のお願いは書かない。');
+    } else {
+      rules.push('章の最後は、次が気になる一言で終える（例：「けれど、その封筒の中身を見たとき、私は自分の目を疑いました」）。物語を完結させない。');
+    }
+
+    return `朗読向けの人生ばなし『${plot.title}』の第${idx + 1}章（全${total}章）の本文を書いてください。
+
+■ 物語の概要
+${plot.logline}
+主題：${plot.theme || ''}
+舞台：${plot.setting || ''}
+
+■ 登場人物（1人目が語り手の「私」）
+${charactersText(plot)}
+
+■ 全体の章立て
+${outline}
+
+${idx > 0 ? `■ これまでの章の要約（この内容と矛盾させないこと）
+${summaries}
+
+■ 直前の本文（この続きとして自然につながるように語り出すこと。この部分は繰り返さない）
+……${lastText}
+` : ''}
+■ 今回書く章
+第${idx + 1}章「${ch.title}」（${ch.phase}）
+あらすじ：${ch.synopsis}
+入れる場面：${(ch.keyScenes || []).join('／')}
+主な舞台：${(ch.locations || []).join('、')}
+章の終わり方：${ch.endingHook || ''}
+
+■ 書き方
+${rules.map(r => '- ' + r).join('\n')}`;
+  }
+
   function buildPlotPrompt(s) {
+    if (isSenior(s)) return buildSeniorPlotPrompt(s);
     return `次の条件で、長編小説の全体プロットと章立てを作ってください。
 
 【題名】${s.title || '（未定。物語にふさわしい題名を付けること）'}
@@ -429,6 +617,7 @@
   }
 
   function buildChapterPrompt(s, plot, idx) {
+    if (isSenior(s)) return buildSeniorChapterPrompt(s, plot, idx);
     const ch = plot.chapters[idx];
     const total = plot.chapters.length;
     const prev = state.novel.chapters.slice(0, idx);
@@ -558,8 +747,21 @@ ${fullText}`;
         keyScenes: Array.isArray(c.keyScenes) ? c.keyScenes.map(String) : [],
         locations: Array.isArray(c.locations) ? c.locations.map(String) : [],
         endingHook: String(c.endingHook || '')
-      }))
+      })),
+      youtube: normalizeYoutube(p.youtube)
     };
+  }
+
+  function normalizeYoutube(y) {
+    if (!y || typeof y !== 'object') return null;
+    const thumb = Array.isArray(y.thumbnail) ? y.thumbnail.map(String) : String(y.thumbnail || '').split('\n');
+    const out = { title: String(y.title || ''), thumbnail: thumb.map(t => t.trim()).filter(Boolean), description: String(y.description || '') };
+    return (out.title || out.thumbnail.length || out.description) ? out : null;
+  }
+
+  function youtubeText(y) {
+    if (!y) return '';
+    return [`【タイトル】\n${y.title}`, `【サムネイル】\n${y.thumbnail.join('\n')}`, `【概要欄】\n${y.description}`].join('\n\n');
   }
 
   function renderPlot() {
@@ -571,6 +773,12 @@ ${fullText}`;
     $('#plot-logline').value = p.logline;
     $('#plot-setting').value = p.setting;
     $('#plot-characters').value = p.characters.map(c => `${c.name}｜${c.role}｜${c.description}`).join('\n');
+    $('#plot-youtube').hidden = !p.youtube;
+    if (p.youtube) {
+      $('#yt-title').value = p.youtube.title;
+      $('#yt-thumb').value = p.youtube.thumbnail.join('\n');
+      $('#yt-desc').value = p.youtube.description;
+    }
     $('#plot-chapters').innerHTML = p.chapters.map((c, i) => `
       <li data-i="${i}">
         <div class="plan-head">
@@ -597,6 +805,11 @@ ${fullText}`;
         const [name = '', role = '', ...rest] = l.split(/[｜|]/);
         return { name: name.trim(), role: role.trim(), description: rest.join('｜').trim() };
       });
+      if (p.youtube) {
+        p.youtube.title = $('#yt-title').value;
+        p.youtube.thumbnail = $('#yt-thumb').value.split('\n').map(x => x.trim()).filter(Boolean);
+        p.youtube.description = $('#yt-desc').value;
+      }
       $$('#plot-chapters > li').forEach(li => {
         const c = p.chapters[num(li.dataset.i)];
         $$('[data-k]', li).forEach(inp => {
@@ -647,6 +860,7 @@ ${fullText}`;
       r = await gemini({ system: buildSystemPrompt(s), prompt: buildContinuePrompt(plot, idx, text), maxTokens, temperature: 0.9 });
       text += '\n' + cleanChapter(r.text);
     }
+    if (isSenior(s)) text = text.split('\n').filter(l => !/^[\s　＊*※☆★◇◆―─－\-]+$/.test(l)).join('\n');
     if (!text.trim()) throw new Error(`第${idx + 1}章の本文が空でした。もう一度お試しください`);
 
     state.novel.chapters[idx] = { title: plot.chapters[idx].title, text, summary: '' };
@@ -1416,6 +1630,20 @@ b.onclick=function(){document.body.classList.toggle('v');b.textContent=document.
 </html>`;
   }
 
+  async function copyYoutube() {
+    const y = state.novel.plot && state.novel.plot.youtube;
+    if (!y) return;
+    const text = youtubeText(y);
+    try { await navigator.clipboard.writeText(text); toast('YouTube用の文案をコピーしました'); }
+    catch (e) {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); toast('YouTube用の文案をコピーしました'); } catch (e2) { toast('コピーできませんでした', true); }
+      ta.remove();
+    }
+  }
+
   async function copyAll() {
     if (!hasText()) { toast('まだ本文がありません', true); return; }
     const text = buildPlainText();
@@ -1633,6 +1861,7 @@ b.onclick=function(){document.body.classList.toggle('v');b.textContent=document.
     $('#btn-new').addEventListener('click', newWork);
     $('#btn-replot').addEventListener('click', () => { showPanel('settings'); generatePlot(); });
     $('#btn-to-write').addEventListener('click', () => showPanel('write'));
+    $('#btn-copy-yt').addEventListener('click', copyYoutube);
     bindPlotEditor();
 
     $('#toc-list').addEventListener('click', e => {

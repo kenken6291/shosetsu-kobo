@@ -1,4 +1,4 @@
-# 小説工房（shosetsu-kobo） v1.0.0
+# 小説工房（shosetsu-kobo） v1.1.0
 
 作風・時代・トーン・描写の切り口を選び、Gemini で「構成 → 章ごとの本文」を連鎖生成する長編小説Webアプリ。朗読（Gemini TTS）、ロケ地抽出（Google Earth 用 KML／カメラJSON）、Googleドライブ保存つき。
 
@@ -34,6 +34,12 @@
 2. `config.js` の `GAS_API_URL` に控えたURLを貼る
 3. Settings → Pages → Branch: main / root で公開
 4. `https://kenken6291.github.io/shosetsu-kobo/` を開いて新規登録
+
+## 書き方モード（v1.1.0）
+
+- 長編小説：これまでどおり作風・時代・トーン・描写の切り口を選んで書く
+- シニアの人生ばなし（朗読向け）：YouTube朗読チャンネル風。60〜80代の「私」が老後のいまと昭和の思い出を行き来して語る。語り手・テーマ・語り口・結末・冒頭のつかみ・締めの語りかけを選択。構成にYouTube用のタイトル・サムネイル文字・概要欄の文案が付く
+- プロンプトはすべて app.js / config.js 側で組み立てるため、Code.gs の変更・再デプロイは不要
 
 ## 3. 使い方の流れ
 
