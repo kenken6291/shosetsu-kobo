@@ -1,10 +1,10 @@
 /**
- * 小説工房 Code.gs v1.0.6
+ * 小説工房 Code.gs v1.1.0
  * GitHub Pages から text/plain の POST(JSON) を受けるAPI。
  *
  * スクリプトプロパティ:
  *   GEMINI_API_KEY        必須
- *   GEMINI_TEXT_MODEL     任意（既定: gemini-2.5-flash）
+ *   GEMINI_TEXT_MODEL     任意（画面でモデル未選択＝自動モードの時に使うモデル。未設定なら汎用の最新）
  *   GEMINI_TTS_MODEL      任意（既定: gemini-2.5-flash-preview-tts）
  *   SPREADSHEET_ID        任意（スプレッドシートに紐づけていない場合）
  *   DRIVE_ROOT_FOLDER_ID  任意（未設定なら setup() で自動作成）
@@ -12,11 +12,22 @@
  *   DAILY_GEN_LIMIT       任意（1人あたりのAI呼び出し上限・6時間ごと。既定300）
  *   DEV_SHOW_TEMP_PASSWORD 任意（'true' で仮パスワードを画面にも返す。テスト時のみ）
  *
+ * 【文章生成のGeminiモデル決定順】
+ *   1. 画面の「AIモデル」で選ばれたモデル（config.js の GEMINI_MODEL_OPTIONS）
+ *   2. スクリプトプロパティ GEMINI_TEXT_MODEL
+ *   3. 汎用の最新モデル FALLBACK_TEXT_MODELS を先頭から順に試す
+ *   ※ 指定モデルに該当がない（廃止・未公開・名前違い）場合は、自動で 3 に切り替えて再実行する。
+ *
  * ※ コードを変えたら「デプロイを管理 → 編集 → 新バージョン」で再デプロイすること。
  */
 
-const APP = { NAME: '小説工房', VERSION: '1.0.6' };
-const DEFAULT_TEXT_MODEL = 'gemini-2.5-flash';
+const APP = { NAME: '小説工房', VERSION: '1.1.0' };
+// 指定なし・該当なしの時に使う汎用最新モデル（先頭から順に試す）
+//   gemini-flash-latest : Googleが常に最新の汎用モデルへ自動で差し替えるエイリアス
+//   gemini-4-hydrogen   : 2026年11月時点の汎用最新モデル（「日々の暮らしをサポート」）
+//   gemini-3.8-flash    : 最終的な保険
+const FALLBACK_TEXT_MODELS = ['gemini-flash-latest', 'gemini-4-hydrogen', 'gemini-3.8-flash'];
+const GEMINI_MODEL_PATTERN = /^gemini-[a-z0-9][a-z0-9.\-]{0,60}$/;
 const DEFAULT_TTS_MODEL = 'gemini-2.5-flash-preview-tts';
 const SESSION_TTL = 21600;               // 6時間（CacheService上限）
 const LOCK_MINUTES = 15;
@@ -39,7 +50,7 @@ function doPost(e) {
     return json_({ ok: false, error: 'リクエストの形式が正しくありません', code: 'BAD_REQUEST' });
   }
   const routes = {
-    ping: () => ({ app: APP.NAME, version: APP.VERSION }),
+    ping: () => ({ app: APP.NAME, version: APP.VERSION, defaultModel: resolveTextModel_(''), fallbackModels: FALLBACK_TEXT_MODELS }),
     register: register_,
     login: login_,
     logout: logout_,
@@ -366,14 +377,34 @@ function generate_(req) {
     prompt: prompt,
     json: !!req.json,
     maxTokens: Math.min(32768, Math.max(256, Number(req.maxTokens) || 8192)),
-    temperature: Math.min(2, Math.max(0, Number(req.temperature) || 0.9))
+    temperature: Math.min(2, Math.max(0, Number(req.temperature) || 0.9)),
+    model: req.model
   });
+}
+
+/**
+ * 使用する文章生成モデルを決める。画面の指定 → スクリプトプロパティ → 汎用の最新 の順。
+ * 不正な名前は無視する。
+ */
+function resolveTextModel_(requested) {
+  const req = String(requested || '').trim().toLowerCase();
+  if (req && GEMINI_MODEL_PATTERN.test(req)) return req;
+  const p = String(prop_('GEMINI_TEXT_MODEL', '') || '').trim().toLowerCase();
+  if (p && GEMINI_MODEL_PATTERN.test(p)) return p;
+  return FALLBACK_TEXT_MODELS[0];
+}
+
+// モデルが存在しない（廃止・未公開・名前違い）ことを示す応答か
+function isModelNotFound_(code, txt) {
+  if (code === 404) return true;
+  if (code === 400) return /not found|is not supported|NOT_FOUND|unknown model|invalid model/i.test(txt);
+  return false;
 }
 
 function callGemini_(o) {
   const key = prop_('GEMINI_API_KEY', '');
   if (!key) fail_('サーバーにGemini APIキーが設定されていません', 'CONFIG');
-  const model = prop_('GEMINI_TEXT_MODEL', DEFAULT_TEXT_MODEL);
+  const model = resolveTextModel_(o.model);
   const body = {
     contents: [{ role: 'user', parts: [{ text: o.prompt }] }],
     generationConfig: { temperature: o.temperature, maxOutputTokens: o.maxTokens },
@@ -387,7 +418,23 @@ function callGemini_(o) {
   if (o.system) body.systemInstruction = { parts: [{ text: o.system }] };
   if (o.json) body.generationConfig.responseMimeType = 'application/json';
 
-  const data = fetchGemini_(model, body, key);
+  // 指定モデルが使えなければ、汎用の最新モデルへ順に切り替える
+  const candidates = [model].concat(FALLBACK_TEXT_MODELS.filter(m => m !== model));
+  let data = null, usedModel = model;
+  for (let i = 0; i < candidates.length; i++) {
+    usedModel = candidates[i];
+    try {
+      data = fetchGemini_(usedModel, body, key);
+      break;
+    } catch (err) {
+      if (err.code !== 'MODEL_NOT_FOUND' || i === candidates.length - 1) {
+        if (err.code === 'MODEL_NOT_FOUND') fail_('使えるAIモデルが見つかりませんでした（' + candidates.join(', ') + '）', 'GEMINI');
+        throw err;
+      }
+      console.warn('Geminiモデル「' + usedModel + '」に該当がないため次の候補に切り替えます');
+    }
+  }
+  const meta = { model: usedModel, requestedModel: model, fallback: usedModel !== model };
   const cand = (data.candidates || [])[0];
   if (!cand) {
     const reason = data.promptFeedback && data.promptFeedback.blockReason;
@@ -397,7 +444,7 @@ function callGemini_(o) {
     .filter(p => typeof p.text === 'string' && !p.thought)
     .map(p => p.text).join('');
   if (!text && cand.finishReason === 'SAFETY') fail_('AIが内容を理由に生成を止めました。設定や題材を少し変えてお試しください', 'GEMINI');
-  return { text: text, finishReason: cand.finishReason || '' };
+  return Object.assign({ text: text, finishReason: cand.finishReason || '' }, meta);
 }
 
 function fetchGemini_(model, body, key) {
@@ -414,6 +461,11 @@ function fetchGemini_(model, body, key) {
     const txt = res.getContentText();
     if (code === 200) return JSON.parse(txt);
     last = code + ' ' + txt.slice(0, 300);
+    if (isModelNotFound_(code, txt)) {
+      const e = new Error('AIモデル「' + model + '」が見つかりません');
+      e.code = 'MODEL_NOT_FOUND';
+      throw e;
+    }
 
     if (code === 429) {
       const info = parse429_(txt);
@@ -489,7 +541,17 @@ function tts_(req) {
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } }
     }
   };
-  const data = fetchGemini_(model, body, key);
+  let data;
+  try {
+    data = fetchGemini_(model, body, key);
+  } catch (err) {
+    if (err.code !== 'MODEL_NOT_FOUND' || model === DEFAULT_TTS_MODEL) {
+      if (err.code === 'MODEL_NOT_FOUND') fail_('朗読用のAIモデル「' + model + '」が見つかりません', 'GEMINI');
+      throw err;
+    }
+    console.warn('TTSモデル「' + model + '」に該当がないため ' + DEFAULT_TTS_MODEL + ' に切り替えます');
+    data = fetchGemini_(DEFAULT_TTS_MODEL, body, key);
+  }
   const parts = (((data.candidates || [])[0] || {}).content || {}).parts || [];
   const audio = parts.find(p => p.inlineData && p.inlineData.data);
   if (!audio) fail_('音声を作れませんでした', 'GEMINI');

@@ -5,11 +5,26 @@
  */
 window.APP_CONFIG = {
   APP_NAME: '小説工房',
-  VERSION: 'v1.2.0',
-  UPDATED: '2026-11-01',
+  VERSION: 'v1.3.0',
+  UPDATED: '2026-11-19',
 
   // ▼ GAS Web App の URL（デプロイ → ウェブアプリ のURL）
   GAS_API_URL: 'https://script.google.com/macros/s/AKfycby3gKyCAAxRgER4b2KEAs8Rz4DSsMIr_YrgARgyui4GlaUbuvH7XlgYdhq0aXu5fuSmEw/exec',
+
+  // ▼ 文章生成に使うGeminiモデル
+  // 既定（画面で選ばなかった時）。空文字 '' = 自動（汎用の最新モデル）
+  GEMINI_MODEL: '',
+  // 画面の「AIモデル」選択肢（value がAPIのモデルID）
+  // 指定モデルに該当がない（廃止・未公開・名前違い）場合は GAS 側で汎用の最新モデルへ自動で切り替わる
+  GEMINI_MODEL_OPTIONS: [
+    { value: '',                  label: '自動モード（汎用の最新）' },
+    { value: 'gemini-4-hydrogen', label: '4 Hydrogen（日々の暮らしをサポート）' },
+    { value: 'gemini-4-neon',     label: '4 Neon（Deeper analysis）' },
+    { value: 'gemini-4-carbon',   label: '4 Carbon（Code & complex work）' },
+    { value: 'gemini-4-argon',    label: '4 Argon' },
+    { value: 'gemini-3.8-flash',  label: '3.8 Flash' },
+    { value: 'gemini-3.5-flash',  label: '3.5 Flash' }
+  ],
 
   // ▼ 生成まわりの初期値
   DEFAULTS: {

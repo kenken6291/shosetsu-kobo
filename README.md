@@ -1,4 +1,4 @@
-# 小説工房（shosetsu-kobo） v1.2.0
+# 小説工房（shosetsu-kobo） v1.3.0
 
 作風・時代・トーン・描写の切り口を選び、Gemini で「構成 → 章ごとの本文」を連鎖生成する長編小説Webアプリ。朗読（Gemini TTS）、ロケ地抽出（Google Earth 用 KML／カメラJSON）、Googleドライブ保存つき。
 
@@ -15,7 +15,7 @@
 2. 拡張機能 → Apps Script を開き、`Code.gs` の中身を貼り付けて保存
 3. プロジェクトの設定 → スクリプト プロパティに追加
    - `GEMINI_API_KEY` … Google AI Studio で発行したキー（必須）
-   - `GEMINI_TEXT_MODEL` … 使う文章モデル名（任意。既定 `gemini-2.5-flash`）
+   - `GEMINI_TEXT_MODEL` … 画面で「自動モード」の時に使う文章モデル名（任意。未設定なら汎用の最新 `gemini-flash-latest`）
    - `GEMINI_TTS_MODEL` … 使う音声モデル名（任意。既定 `gemini-2.5-flash-preview-tts`）
    - `DEV_SHOW_TEMP_PASSWORD` … テスト中だけ `true`（仮パスワードを画面にも表示）。本番では削除
 4. エディタで関数 `setup` を選んで実行 → 権限を承認
@@ -61,3 +61,10 @@
 - ログインは6時間操作がないと切れます（CacheService）
 - AIの呼び出しは1人あたり6時間で300回まで（`DAILY_GEN_LIMIT` で変更可）
 - 執筆途中の内容はブラウザに自動で下書き保存されます
+
+## AIモデル選択（v1.3.0）
+- 「どんな小説を書くか」画面の「執筆に使うAIモデル」で、自動モード／4 Hydrogen／4 Neon／4 Carbon／4 Argon／3.8 Flash／3.5 Flash を選択（ブラウザに記憶）
+- 選択肢は `config.js` の `GEMINI_MODEL_OPTIONS` で増減できる
+- 指定モデルが使えない（廃止・未公開・名前違い）時は、GAS側で `gemini-flash-latest` → `gemini-4-hydrogen` → `gemini-3.8-flash` の順に自動で切り替え。実際に使ったモデルは画面下部に表示
+- 朗読（TTS）は従来どおり `GEMINI_TTS_MODEL`（該当なしなら既定モデルに切り替え）
+

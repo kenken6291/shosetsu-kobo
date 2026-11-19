@@ -164,6 +164,7 @@
           <li>うまく書けなかった章は、構成のあらすじを具体的に直してから書き直すと良くなります。</li>
           <li>6時間ほど操作しないとログインが切れます。その場合はもう一度ログインしてください。</li>
           <li>右上の「明暗」で明るい表示と暗い表示を切り替えられます。</li>
+          <li>「どんな小説を書くか」の下の「執筆に使うAIモデル」で、Geminiのモデルを選べます（選択はこのブラウザに記憶）。迷ったら「自動モード」で大丈夫です。選んだモデルが使えない時は、汎用の最新モデルに自動で切り替わります。</li>
         </ul>
       </section>
     </div>
@@ -257,6 +258,10 @@
         </div>
         <label class="field"><span>その他の希望（任意）</span>
           <textarea name="notes" rows="2" maxlength="1000" placeholder="例：結末は救いのある形に。暴力描写は控えめに。"></textarea></label>
+        <div class="model-picker">
+          <label class="field"><span>執筆に使うAIモデル</span><select id="sel-model"></select></label>
+          <p class="model-hint">選んだモデルが使えない時は、汎用の最新モデルに自動で切り替わります。<span id="model-current"></span></p>
+        </div>
         <div class="actions">
           <button type="submit" class="btn primary" id="btn-plot">構成を作る</button>
           <button type="button" class="btn ghost" id="btn-new">新しい作品にする</button>
@@ -415,6 +420,7 @@
 
   <footer class="site-foot">
     <span id="foot-version"></span>
+    <span class="foot-model">AIモデル：<span id="foot-model">自動モード（汎用の最新）</span></span>
     <button type="button" class="foot-link" id="btn-pw-change" hidden>パスワード変更</button>
   </footer>
 

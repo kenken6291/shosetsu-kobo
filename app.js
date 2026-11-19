@@ -8,7 +8,7 @@
   const C = window.APP_CONFIG;
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
-  const LS = { session: 'skb_session', draft: 'skb_draft', theme: 'skb_theme', reader: 'skb_reader', guide: 'skb_guide_seen' };
+  const LS = { session: 'skb_session', draft: 'skb_draft', theme: 'skb_theme', reader: 'skb_reader', guide: 'skb_guide_seen', model: 'skb_model' };
 
   const state = {
     token: null,
@@ -119,8 +119,56 @@
   }
 
   function gemini({ system, prompt, json = false, maxTokens = 8192, temperature = 0.9 }) {
-    return withRetry(() => api('generate', { system, prompt, json, maxTokens, temperature }, { signal: state.abort?.signal }));
+    return withRetry(() => api('generate', { system, prompt, json, maxTokens, temperature, model: model.value }, { signal: state.abort?.signal }))
+      .then(r => { model.onUsed(r); return r; });
   }
+
+  /* ================= AIモデル選択 ================= */
+  const MODEL_OPTIONS = Array.isArray(C.GEMINI_MODEL_OPTIONS) && C.GEMINI_MODEL_OPTIONS.length
+    ? C.GEMINI_MODEL_OPTIONS
+    : [{ value: '', label: '自動モード（汎用の最新）' }];
+  const model = {
+    value: C.GEMINI_MODEL || '',
+    serverDefault: '',
+    warned: {},
+    label(v) {
+      const o = MODEL_OPTIONS.find(x => x.value === v);
+      return o ? o.label : (v || '自動モード（汎用の最新）');
+    },
+    show(used) {
+      let t = this.label(this.value);
+      if (!this.value && (used || this.serverDefault)) t += `（${used || this.serverDefault}）`;
+      else if (used && used !== this.value) t += ` → ${used}`;
+      $('#foot-model').textContent = t;
+      $('#model-current').textContent = used ? `前回の生成：${used}` : '';
+    },
+    init() {
+      try {
+        const saved = localStorage.getItem(LS.model);
+        if (saved !== null && MODEL_OPTIONS.some(o => o.value === saved)) this.value = saved;
+      } catch (e) { /* 無視 */ }
+      const sel = $('#sel-model');
+      sel.innerHTML = MODEL_OPTIONS.map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
+      sel.value = this.value;
+      sel.addEventListener('change', () => {
+        this.value = sel.value;
+        try { localStorage.setItem(LS.model, this.value); } catch (e) { /* 無視 */ }
+        this.show('');
+        toast(`AIモデルを「${this.label(this.value)}」にしました`);
+      });
+      this.show('');
+      // 自動モード時に実際に使われるモデル名をサーバーから取得
+      api('ping', {}).then(r => { this.serverDefault = r.defaultModel || ''; this.show(''); }).catch(() => {});
+    },
+    onUsed(r) {
+      if (!r || !r.model) return;
+      this.show(r.model);
+      if (r.fallback && !this.warned[r.requestedModel]) {
+        this.warned[r.requestedModel] = true;
+        toast(`「${r.requestedModel}」は使えなかったため ${r.model} で書きました`);
+      }
+    }
+  };
 
   // 中断ボタンで止められる待ち時間（残り秒数を表示）
   async function waitSec(sec, label) {
@@ -2068,6 +2116,7 @@ b.onclick=function(){document.body.classList.toggle('v');b.textContent=document.
 
     initPwToggles();
     initSettingsForm();
+    model.init();
     bind();
     restoreDraft();
 
